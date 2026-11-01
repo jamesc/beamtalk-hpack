@@ -1,0 +1,136 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// Port of hpax's `HPAX.TypesTest` (plus RFC 7541 §C.1): prefixed integers
+/// and string literals.
+///
+/// `HPACKTypes encodeInteger:` folds the caller's flag bits into the first
+/// byte (Beamtalk has no bitstring construction), so the spec examples
+/// assert byte lists rather than bitstrings.
+TestCase subclass: HPACKTypesTest
+
+  // === Spec examples (RFC 7541 §C.1) ===
+  testEncodeIntegers =>
+    self
+      assert: (HPACKTypes
+        encodeInteger: 10
+        prefix: 5
+        flags: 0)
+      equals: #(10)
+    self
+      assert: (HPACKTypes
+        encodeInteger: 1337
+        prefix: 5
+        flags: 0)
+      equals: #(31, 154, 10)
+    self
+      assert: (HPACKTypes
+        encodeInteger: 42
+        prefix: 8
+        flags: 0)
+      equals: #(42)
+
+  testEncodeIntegerWithFlags =>
+    // An indexed field for index 2: 0x80 | 2.
+    self
+      assert: (HPACKTypes
+        encodeInteger: 2
+        prefix: 7
+        flags: 128)
+      equals: #(130)
+    // A dynamic size update to 0: 0x20 | 0.
+    self
+      assert: (HPACKTypes
+        encodeInteger: 0
+        prefix: 5
+        flags: 32)
+      equals: #(32)
+
+  testDecodeIntegers =>
+    self assert: (HPACKTypes decodeInteger: (Binary fromBytes: #(10, 102, 111, 111)) prefix: 5) equals: {#ok, 10, (Binary fromBytes: #(102, 111, 111))}
+    self assert: (HPACKTypes decodeInteger: (Binary fromBytes: #(31, 154, 10, 102, 111, 111)) prefix: 5) equals: {#ok, 1337, (Binary fromBytes: #(102, 111, 111))}
+    self assert: (HPACKTypes decodeInteger: (Binary fromBytes: #(42, 102, 111, 111)) prefix: 8) equals: {#ok, 42, (Binary fromBytes: #(102, 111, 111))}
+
+  testDecodeIntegerIgnoresFlagBits =>
+    // 0x82 is an indexed field for index 2; the 7-bit prefix reads 2.
+    self assert: (HPACKTypes decodeInteger: (Binary fromBytes: #(130)) prefix: 7) equals: {#ok, 2, (Binary fromBytes: #())}
+
+  testDecodeIntegerBadData =>
+    // Empty input and truncated continuations fail (hpax `:error`, here
+    // with the reason hpax's caller attaches).
+    self assert: (HPACKTypes decodeInteger: (Binary fromBytes: #()) prefix: 5) equals: {#error, #bad_integer_encoding}
+    self assert: (HPACKTypes decodeInteger: (Binary fromBytes: #(255)) prefix: 5) equals: {#error, #bad_integer_encoding}
+    self assert: (HPACKTypes decodeInteger: (Binary fromBytes: #(255, 128)) prefix: 5) equals: {#error, #bad_integer_encoding}
+
+  // === 2^32 - 1 bound (RFC 7541 §5.1; hpax CVE-2026-58226) ===
+  testDecodeIntegerMax =>
+    max := 4294967295
+    wire := Binary
+      fromBytes: (HPACKTypes
+        encodeInteger: max
+        prefix: 5
+        flags: 0)
+    self assert: (HPACKTypes decodeInteger: (wire concat: (Binary fromBytes: #(114, 101, 115, 116))) prefix: 5) equals: {#ok, max, (Binary fromBytes: #(114, 101, 115, 116))}
+
+  testDecodeIntegerRejectsAboveMax =>
+    wire := Binary
+      fromBytes: (HPACKTypes
+        encodeInteger: 4294967296
+        prefix: 5
+        flags: 0)
+    self assert: (HPACKTypes decodeInteger: wire prefix: 5) equals: {#error, #bad_integer_encoding}
+
+  testDecodeIntegerLongContinuationRunIsFast =>
+    // A prefix of all-ones plus a million continuation octets must bail
+    // out after a fixed number of octets, not grind through bignums.
+    payload := Erlang binary copy: (Binary fromBytes: #(255)) with: 1000000
+    t0 := Erlang erlang monotonic_time: #microsecond
+    result := HPACKTypes decodeInteger: payload prefix: 5
+    t1 := Erlang erlang monotonic_time: #microsecond
+    self assert: result equals: {#error, #bad_integer_encoding}
+    self assert: (t1 - t0) < 100000
+
+  // === Seeded loops (hpax's StreamData properties) ===
+  testIntegersCircularSeeded =>
+    self seedRandom: 40800111
+    300
+      timesRepeat: [
+        value := (Random nextInteger: 4294967296) - 1
+        prefix := Random nextInteger: 8
+        cruft := Binary fromBytes: (self randomBytes: (Random nextInteger: 8) - 1)
+        wire := (Binary
+          fromBytes: (HPACKTypes
+            encodeInteger: value
+            prefix: prefix
+            flags: 0)) concat: cruft
+        self assert: (HPACKTypes decodeInteger: wire prefix: prefix) equals: {#ok, value, cruft}
+      ]
+
+  testStringsCircularSeeded =>
+    self seedRandom: 40800112
+    200
+      timesRepeat: [
+        string := Binary fromBytes: (self randomBytes: (Random nextInteger: 33) - 1)
+        cruft := Binary fromBytes: (self randomBytes: (Random nextInteger: 8) - 1)
+        huffman := (Random nextInteger: 2) =:= 1
+        wire := Binary fromIolist: #((HPACKTypes encodeBinary: string huffman: huffman), cruft)
+        self assert: (HPACKTypes decodeBinary: wire) equals: {#ok, string, cruft}
+      ]
+
+  // === Helpers ===
+
+  /// Seed the process generator behind class-side `Random`. `Random`
+  /// exposes no seeder itself, so this one FFI line does what Catalina's
+  /// fuzz does (`rand:seed(exsss, ...)`); every draw below stays
+  /// `Random nextInteger:`.
+  seedRandom: s -> Nil =>
+    (Erlang rand) seed: #exsss with: {s, s + 1000, s + 2000}
+    nil
+
+  randomBytes: n -> List =>
+    n =:= 0 ifTrue: [^#()]
+    self randomBytes: n - 1 into: #()
+
+  randomBytes: n into: acc =>
+    n =:= 0 ifTrue: [^acc]
+    self randomBytes: n - 1 into: (acc addFirst: (Random nextInteger: 256) - 1)

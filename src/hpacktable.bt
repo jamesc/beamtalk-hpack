@@ -1,0 +1,267 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// HPACKTable — the HPACK static and dynamic tables (RFC 7541 §2.3, §4).
+///
+/// An immutable Value: every update answers a new table, as hpax's struct
+/// updates do. `entries` holds the dynamic entries newest-first; indexes
+/// 1..61 address the static table, 62 and up the dynamic table.
+///
+/// A port of `HPAX.Table` (hpax 1.0.4). Lookups answer `{#full, index}`,
+/// `{#name, index}` or `#not_found`; index lookups answer the header or
+/// nil — hpax's `{:ok, header}` / `:error` without the wrapper, since a
+/// stored header pair is never nil itself.
+sealed typed Value subclass: HPACKTable
+  field: protocolMaxTableSize :: Integer = 0
+  field: maxTableSize :: Integer = 0
+  field: huffmanEncoding :: Symbol = #never
+  field: entries :: List = #()
+  field: size :: Integer = 0
+  field: length :: Integer = 0
+  field: pendingMinimumResize :: Integer | Nil = nil
+
+  // === Construction ===
+
+  /// Create a table with the given protocol maximum size (hpax `new/2`).
+  ///
+  /// ## Arguments
+  /// - `protocolMax` (Integer) — the protocol maximum table size in bytes.
+  /// - `h` (Symbol) — the Huffman policy, `#always` or `#never`.
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// t := HPACKTable new: 4096 huffman: #never
+  /// t maxTableSize   // => 4096
+  /// ```
+  class sealed new: protocolMax :: Integer huffman: h :: Symbol -> HPACKTable =>
+    HPACKTable
+      new: #{
+        #protocolMaxTableSize => protocolMax,
+        #maxTableSize => protocolMax,
+        #huffmanEncoding => h
+      }
+
+  // === The static table (RFC 7541 Appendix A) ===
+
+  /// The static table (RFC 7541 Appendix A), oldest-first: index 1 is first.
+  class sealed staticTable -> List(Tuple) =>
+    #({":authority", nil}, {":method", "GET"}, {":method", "POST"}, {":path", "/"}, {":path", "/index.html"}, {":scheme", "http"}, {":scheme", "https"}, {":status", "200"}, {":status", "204"}, {":status", "206"}, {":status", "304"}, {":status", "400"}, {":status", "404"}, {":status", "500"}, {"accept-charset", nil}, {"accept-encoding", "gzip, deflate"}, {"accept-language", nil}, {"accept-ranges", nil}, {"accept", nil}, {"access-control-allow-origin", nil}, {"age", nil}, {"allow", nil}, {"authorization", nil}, {"cache-control", nil}, {"content-disposition", nil}, {"content-encoding", nil}, {"content-language", nil}, {"content-length", nil}, {"content-location", nil}, {"content-range", nil}, {"content-type", nil}, {"cookie", nil}, {"date", nil}, {"etag", nil}, {"expect", nil}, {"expires", nil}, {"from", nil}, {"host", nil}, {"if-match", nil}, {"if-modified-since", nil}, {"if-none-match", nil}, {"if-range", nil}, {"if-unmodified-since", nil}, {"last-modified", nil}, {"link", nil}, {"location", nil}, {"max-forwards", nil}, {"proxy-authenticate", nil}, {"proxy-authorization", nil}, {"range", nil}, {"referer", nil}, {"refresh", nil}, {"retry-after", nil}, {"server", nil}, {"set-cookie", nil}, {"strict-transport-security", nil}, {"transfer-encoding", nil}, {"user-agent", nil}, {"vary", nil}, {"via", nil}, {"www-authenticate", nil})
+
+  /// The number of static entries (61).
+  class sealed staticTableSize -> Integer => 61
+
+  /// The static table with names (and binary values) canonicalized to
+  /// `Binary`, built once per VM: header lookups compare bytes without any
+  /// per-entry flattening.
+  class sealed staticBinaries -> List =>
+    cached := (Erlang persistent_term) get: #hpack_static_binaries with: nil
+    cached isNil ifTrue: [^self buildStaticBinaries]
+    cached
+
+  /// Canonicalize the static table and cache it under `#hpack_static_binaries`.
+  class sealed buildStaticBinaries -> List =>
+    built := HPACKTable staticTable collect: [:e :: Tuple |
+      {(HPACKTypes canon: (e at: 1)), self canonValue: (e at: 2)}
+    ]
+    (Erlang persistent_term) put: #hpack_static_binaries with: built
+    built
+
+  /// Canonicalize a static value, keeping nil (name-only entries).
+  class sealed canonValue: value :: Binary -> Binary | Nil =>
+    value isNil ifTrue: [^nil]
+    HPACKTypes canon: value
+
+  // === The dynamic table ===
+
+  /// The first dynamic index (62).
+  class sealed dynamicTableStart -> Integer => 62
+
+  /// Add a header, evicting oldest entries past the maximum (hpax `add/3`).
+  /// An entry larger than the maximum empties the table.
+  ///
+  /// ## Arguments
+  /// - `name` (Binary) — the header name (`String` is canonicalized).
+  /// - `value` (Binary) — the header value (`String` is canonicalized).
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// t := (HPACKTable new: 4096 huffman: #never) add: "cookie" value: "x"
+  /// t length   // => 1
+  /// ```
+  add: name :: Binary value: value :: Binary -> HPACKTable =>
+    n := HPACKTypes canon: name
+    v := HPACKTypes canon: value
+    e := n size + v size + 32
+    e > self maxTableSize ifTrue: [
+      ^((self withEntries: #()) withSize: 0) withLength: 0
+    ]
+    self size + e > self maxTableSize
+      ifTrue: [
+        ^(self evictToSize: self maxTableSize - e)
+          addHeader: n
+          value: v
+          size: e
+      ]
+    self
+      addHeader: n
+      value: v
+      size: e
+
+  /// Prepend a header known to fit.
+  addHeader: name :: Binary value: value :: Binary size: e :: Integer -> HPACKTable =>
+    ((self withEntries: (self entries addFirst: {name, value})) withSize: self size + e) withLength: self length + 1
+
+  // === Lookups ===
+
+  /// Look up a header by index (hpax `lookup_by_index/2`): the header pair,
+  /// or nil when out of bounds. A static pair may carry a nil value.
+  ///
+  /// ## Arguments
+  /// - `index` (Integer) — the 1-based table index.
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// (t lookupByIndex: 2) at: 1   // => the :method name as a Binary
+  /// t lookupByIndex: 0           // => nil
+  /// ```
+  lookupByIndex: index :: Integer -> Tuple | Nil =>
+    index >= 1
+      ifTrue: [
+        index <= HPACKTable staticTableSize ifTrue: [
+          ^(HPACKTable staticBinaries) at: index
+        ]
+      ]
+    start := HPACKTable dynamicTableStart
+    (index >= start and: [
+      index <= (start + self length) - 1
+    ]) ifTrue: [^self entries at: (index - start) + 1]
+    nil
+
+  /// Look up the index of a header (hpax `lookup_by_header/3`): `{#full,
+  /// index}` for a full match, `{#name, index}` for a name match,
+  /// `#not_found` otherwise. A static full match wins; otherwise a dynamic
+  /// full match beats a static name match.
+  ///
+  /// ## Arguments
+  /// - `name` (Binary) — the header name (`String` is canonicalized).
+  /// - `value` (Binary | Nil) — the header value, nil for name-only entries.
+  lookupByHeader: name :: Binary value: value :: Binary | Nil -> Tuple | Symbol =>
+    key := HPACKTypes canon: name
+    cval := nil
+    value ifNotNil: [:v :: Binary | cval := HPACKTypes canon: v]
+    full := nil
+    nameHit := nil
+    i := 0
+    hit := false
+    HPACKTable staticBinaries
+      do: [:entry :: Tuple |
+        i := i + 1
+        hit := (entry at: 1) equals: key
+        hit
+          ifTrue: [
+            nameHit isNil ifTrue: [nameHit := i]
+            ((entry at: 2) notNil and: [
+              cval notNil
+            ]) ifTrue: [((entry at: 2) equals: cval) ifTrue: [full := i]]
+          ]
+      ]
+    full notNil ifTrue: [^{#full, full}]
+    hit := self
+      dynamicFull: self entries
+      key: key
+      value: cval
+      index: HPACKTable dynamicTableStart
+    hit ifNotNil: [:h :: Integer | ^{#full, h}]
+    nameHit notNil ifTrue: [^{#name, nameHit}]
+    hit := self
+      dynamicName: self entries
+      key: key
+      index: HPACKTable dynamicTableStart
+    hit ifNotNil: [:h :: Integer | ^{#name, h}]
+    #not_found
+
+  /// Scan newest-first entries for a full match: the index or nil.
+  dynamicFull: entries :: List key: key :: Binary value: value :: Binary | Nil index: i :: Integer -> Integer | Nil =>
+    entries isEmpty ifTrue: [^nil]
+    entry := entries first
+    ((entry at: 1) equals: key) ifTrue: [
+      ((entry at: 2) equals: value) ifTrue: [^i]
+    ]
+    self
+      dynamicFull: entries rest
+      key: key
+      value: value
+      index: i + 1
+
+  /// Scan newest-first entries for a name match: the index or nil.
+  dynamicName: entries :: List key: key :: Binary index: i :: Integer -> Integer | Nil =>
+    entries isEmpty ifTrue: [^nil]
+    entry := entries first
+    ((entry at: 1) equals: key) ifTrue: [^i]
+    self
+      dynamicName: entries rest
+      key: key
+      index: i + 1
+
+  // === Resizing and eviction ===
+
+  /// Change the protocol maximum size, evicting as needed (hpax `resize/2`).
+  /// Shrinking below the maximum records a pending resize, signalled to the
+  /// decoder as dynamic size updates prefixed to the next encoded block.
+  ///
+  /// ## Arguments
+  /// - `newMax` (Integer) — the new protocol maximum size in bytes.
+  resize: newMax :: Integer -> HPACKTable =>
+    pending := newMax
+    self pendingMinimumResize ifNotNil: [:current |
+      pending := current < newMax ifTrue: [current] ifFalse: [newMax]
+    ]
+    t := self evictToSize: newMax
+    ((t withMaxTableSize: newMax) withProtocolMaxTableSize: newMax) withPendingMinimumResize: pending
+
+  /// Change only the current maximum size (hpax `dynamic_resize/2`): the
+  /// decoder side of a signalled size update.
+  ///
+  /// ## Arguments
+  /// - `newMax` (Integer) — the new current maximum size in bytes.
+  dynamicResize: newMax :: Integer -> HPACKTable =>
+    (self evictToSize: newMax) withMaxTableSize: newMax
+
+  /// Answer `{table, resizes}` and clear pending resizes (hpax
+  /// `pop_pending_resizes/1`). When the maximum exceeds the pending minimum,
+  /// both are signalled, per RFC 7541 §4.2.
+  popPendingResizes -> Tuple =>
+    self pendingMinimumResize ifNil: [^{self, #()}]
+    out := #()
+    self pendingMinimumResize
+      ifNotNil: [:minimum |
+        out := minimum < self maxTableSize ifTrue: [
+          #(minimum, self maxTableSize)
+        ] ifFalse: [#(minimum)]
+      ]
+    {(self withPendingMinimumResize: nil), out}
+
+  /// Evict oldest entries until the size fits `target` (hpax
+  /// `evict_to_size/2`). The maximum itself is unchanged.
+  ///
+  /// ## Arguments
+  /// - `target` (Integer) — the size in bytes the table must fit.
+  evictToSize: target :: Integer -> HPACKTable =>
+    self size <= target ifTrue: [^self]
+    {keptReversed, newSize} := self
+      dropOldest: self entries reversed
+      size: self size
+      target: target
+    ((self withEntries: keptReversed reversed) withSize: newSize) withLength: keptReversed size
+
+  /// Drop oldest-first entries (reversed, oldest head) until the size fits.
+  /// Answers `{keptReversed, newSize}`.
+  dropOldest: rev :: List size: s :: Integer target: t :: Integer -> Tuple =>
+    s <= t ifTrue: [^{rev, s}]
+    rev isEmpty ifTrue: [^{#(), 0}]
+    oldest := rev first
+    e := (oldest at: 1) size + (oldest at: 2) size + 32
+    self
+      dropOldest: rev rest
+      size: s - e
+      target: t

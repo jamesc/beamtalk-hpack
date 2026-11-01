@@ -1,0 +1,61 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// Port of hpax's `HPAX.HuffmanTest`, plus RFC 7541 Appendix B known
+/// answers. (hpax's joedevivo/hpack cross-checks have no Beamtalk
+/// counterpart — that library is not a dependency — so the RFC vectors and
+/// the HPAX interop fixture in HPACKTest cover cross-implementation
+/// agreement instead.)
+TestCase subclass: HPACKHuffmanTest
+
+  testKnownAnswers =>
+    // RFC 7541 §C.4.1: the Huffman bytes of "www.example.com".
+    self assert: (HPACKHuffman encode: "www.example.com") toBytes equals: #(241, 227, 194, 229, 242, 58, 107, 160, 171, 144, 244, 255)
+    self assert: (HPACKHuffman decode: (Binary fromBytes: #(241, 227, 194, 229, 242, 58, 107, 160, 171, 144, 244, 255))) equals: {#ok, (self bin: "www.example.com")}
+    // RFC 7541 §C.4.2: the Huffman bytes of "no-cache".
+    self assert: (HPACKHuffman encode: "no-cache") toBytes equals: #(168, 235, 16, 100, 156, 191)
+    self assert: (HPACKHuffman decode: (Binary fromBytes: #(168, 235, 16, 100, 156, 191))) equals: {#ok, (self bin: "no-cache")}
+
+  testEmpty =>
+    self assert: (HPACKHuffman encode: (Binary fromBytes: #())) equals: (Binary fromBytes: #())
+    self assert: (HPACKHuffman decode: (Binary fromBytes: #())) equals: {#ok, (Binary fromBytes: #())}
+
+  testBadPadding =>
+    // Trailing bits that are not EOS padding fail with hpax's reason.
+    self assert: (HPACKHuffman decode: (Binary fromBytes: #(0))) equals: {#error, {#protocol_error, #invalid_huffman_encoding}}
+
+  testTablesBuiltOnce =>
+    // The persistent_term cache answers the same tables on repeat calls.
+    first := HPACKHuffman tables
+    self assert: (HPACKHuffman tables) equals: first
+    {enc, dfa} := first
+    self assert: enc size equals: 256
+    self assert: (enc at: 119) equals: {120, 7}
+    // State 0 is the root at depth 0.
+    self assert: ((dfa at: 1) at: 1) equals: 0
+
+  testCircularSeeded =>
+    self seedRandom: 40800411
+    200
+      timesRepeat: [
+        bytes := Binary fromBytes: (self randomBytes: (Random nextInteger: 65) - 1)
+        encoded := HPACKHuffman encode: bytes
+        self assert: (HPACKHuffman decode: encoded) equals: {#ok, bytes}
+      ]
+
+  // === Helpers ===
+  bin: s -> Binary => Binary fromIolist: s
+
+  /// See HPACKTypesTest: one FFI line seeds process-dictionary `rand`; all
+  /// draws stay `Random nextInteger:`.
+  seedRandom: s -> Nil =>
+    (Erlang rand) seed: #exsss with: {s, s + 1000, s + 2000}
+    nil
+
+  randomBytes: n -> List =>
+    n =:= 0 ifTrue: [^#()]
+    self randomBytes: n - 1 into: #()
+
+  randomBytes: n into: acc =>
+    n =:= 0 ifTrue: [^acc]
+    self randomBytes: n - 1 into: (acc addFirst: (Random nextInteger: 256) - 1)

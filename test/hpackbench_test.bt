@@ -1,0 +1,29 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// Benchmark: encode + decode a typical request header block, mirrored by
+/// `bench/bench.exs` for hpax. Writes `_build/bench/hpack.txt`; numbers go
+/// in the README. Each iteration uses fresh tables on both sides, exactly
+/// like the Elixir bench.
+TestCase subclass: HPACKBenchTest
+
+  testBenchReport =>
+    headers := #({#store, ":method", "GET"}, {#store, ":scheme", "https"}, {#store, ":path", "/index.html"}, {#store, ":authority", "www.example.com"}, {#store, "cache-control", "no-cache"}, {#store, "custom-key", "custom-value"})
+    n := 2000
+    // Warm up: build the Huffman tables once, outside the timing.
+    HPACKHuffman tables
+    {warm, _} := HPACK encode: headers table: (HPACK newTable: 4096 huffman: #always)
+    {#ok, back, _} := HPACK decode: (Binary fromIolist: warm) table: (HPACK newTable: 4096 huffman: #always)
+    self assert: back size equals: 6
+    t0 := Erlang erlang monotonic_time: #microsecond
+    n
+      timesRepeat: [
+        e := HPACK newTable: 4096 huffman: #always
+        {io, _} := HPACK encode: headers table: e
+        HPACK decode: (Binary fromIolist: io) table: (HPACK newTable: 4096 huffman: #always)
+      ]
+    t1 := Erlang erlang monotonic_time: #microsecond
+    total := t1 - t0
+    (File mkdirAll: "_build/bench") unwrap
+    (File writeAll: "_build/bench/hpack.txt" contents: "beamtalk-hpack encode+decode x{n}: {total} us total") unwrap
+    self assert: total > 0
