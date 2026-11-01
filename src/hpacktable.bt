@@ -23,6 +23,7 @@ sealed typed Value subclass: HPACKTable
   // === Construction ===
 
   /// Create a table with the given protocol maximum size (hpax `new/2`).
+  /// Anything but `#always`/`#never` raises, as in `HPACK newTable:huffman:`.
   ///
   /// ## Arguments
   /// - `protocolMax` (Integer) — the protocol maximum table size in bytes.
@@ -34,6 +35,9 @@ sealed typed Value subclass: HPACKTable
   /// t maxTableSize   // => 4096
   /// ```
   class sealed new: protocolMax :: Integer huffman: h :: Symbol -> HPACKTable =>
+    (#(#always, #never) includes: h) ifFalse: [
+      self error: "unknown huffman encoding: {h}"
+    ]
     HPACKTable
       new: #{
         #protocolMaxTableSize => protocolMax,
@@ -52,7 +56,8 @@ sealed typed Value subclass: HPACKTable
 
   /// The static table with names (and binary values) canonicalized to
   /// `Binary`, built once per VM: header lookups compare bytes without any
-  /// per-entry flattening.
+  /// per-entry flattening. Like the Huffman tables, the cache lives for the
+  /// VM lifetime: after touching `staticTable`, restart the VM.
   class sealed staticBinaries -> List =>
     cached := (Erlang persistent_term) get: #hpack_static_binaries with: nil
     cached isNil ifTrue: [^self buildStaticBinaries]
@@ -73,8 +78,9 @@ sealed typed Value subclass: HPACKTable
 
   // === The dynamic table ===
 
-  /// The first dynamic index (62).
-  class sealed dynamicTableStart -> Integer => 62
+  /// The first dynamic index: one past the static table, derived (not a
+  /// second constant to keep in sync).
+  class sealed dynamicTableStart -> Integer => HPACKTable staticTableSize + 1
 
   /// Add a header, evicting oldest entries past the maximum (hpax `add/3`).
   /// An entry larger than the maximum empties the table.

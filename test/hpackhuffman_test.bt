@@ -23,6 +23,15 @@ TestCase subclass: HPACKHuffmanTest
   testBadPadding =>
     // Trailing bits that are not EOS padding fail with hpax's reason.
     self assert: (HPACKHuffman decode: (Binary fromBytes: #(0))) equals: {#error, {#protocol_error, #invalid_huffman_encoding}}
+    // Sixteen ones are past the 7-bit padding limit (depth 16).
+    self assert: (HPACKHuffman decode: (Binary fromBytes: #(255, 255))) equals: {#error, {#protocol_error, #invalid_huffman_encoding}}
+    // 11110010 decodes 'x' (1111001) plus a 0 bit: padding must be all ones.
+    self assert: (HPACKHuffman decode: (Binary fromBytes: #(242))) equals: {#error, {#protocol_error, #invalid_huffman_encoding}}
+    // 30 ones: bits 25-29 are shared with code 22's 29-ones prefix, but
+    // bit 30 is 1 where every non-EOS code has 0 (EOS itself is excluded
+    // from the trie) — a dead transition mid-input, which must answer
+    // invalid, not crash.
+    self assert: (HPACKHuffman decode: (Binary fromBytes: #(255, 255, 255, 255))) equals: {#error, {#protocol_error, #invalid_huffman_encoding}}
 
   testTablesBuiltOnce =>
     // The persistent_term cache answers the same tables on repeat calls.
