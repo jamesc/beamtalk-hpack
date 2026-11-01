@@ -12,6 +12,7 @@ TestCase subclass: HPACKTableTest
     self assert: t huffmanEncoding equals: #always
     self assert: t entries equals: #()
     self assert: t size equals: 0
+    self should: [HPACKTable new: 100 huffman: #sometimes] raise: #user_error
 
   testAddAndLookupByHeader =>
     t := HPACKTable new: 10000 huffman: #always
@@ -59,6 +60,15 @@ TestCase subclass: HPACKTableTest
   testLookupByIndexStatic =>
     self assert: ((HPACKTable new: 100 huffman: #never) lookupByIndex: 1) equals: {(self bin: ":authority"), nil}
 
+  testStaticTable =>
+    // Pin the table RFC 7541 Appendix A fixes: 61 entries, well-known ends.
+    // (The lookup tests below index through staticTableSize, so without
+    // this a short literal would still pass.)
+    self assert: HPACKTable staticTableSize equals: 61
+    self assert: HPACKTable staticTable size equals: 61
+    self assert: (HPACKTable staticTable at: 1) equals: {":authority", nil}
+    self assert: (HPACKTable staticTable at: 61) equals: {"www-authenticate", nil}
+
   testLookupByIndexDynamic =>
     t := HPACKTable new: 100 huffman: #never
     t := t add: "my-header" value: "my-value"
@@ -96,6 +106,7 @@ TestCase subclass: HPACKTableTest
     self assert: t size equals: 40
     self assert: t maxTableSize equals: 60
     self assert: t protocolMaxTableSize equals: 60
+    self assert: (t lookupByIndex: HPACKTable dynamicTableStart) equals: {(self bin: "bbbb"), (self bin: "BBBB")}
 
   testDynamicResizeAboveSize =>
     t := HPACKTable new: 4096 huffman: #never

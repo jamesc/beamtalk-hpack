@@ -24,7 +24,9 @@ sealed typed Object subclass: HPACKHuffman
   // === The built tables (one `persistent_term` entry per VM) ===
 
   /// The built tables, cached in `persistent_term` (built once per VM):
-  /// `{encodeMap, dfa}`.
+  /// `{encodeMap, dfa}`. The cache lives for the VM lifetime with no
+  /// invalidation: after touching `entries`, restart the VM (a `reload_class`
+  /// alone re-reads the stale tables).
   ///
   /// `encodeMap` sends a byte to `{bits, count}`; `dfa` is the nibble-driven
   /// decode automaton (see `decode:`): a tuple of states, state 0 the root,
@@ -45,7 +47,12 @@ sealed typed Object subclass: HPACKHuffman
   /// Build `{encodeMap, dfa}` from the raw entries (EOS has no code to
   /// emit, so it joins neither table: trailing bits are checked against it
   /// by length and ones, which is equivalent for this table — see `decode:`).
+  /// A dead nibble transition also answers `invalidEncoding`, so mid-input
+  /// behavior coincides with hpax too.
   class sealed buildTables -> Tuple =>
+    (self minCodeLength: self entries min: 30) < 5 ifTrue: [
+      self error: "Huffman table needs every code >= 5 bits for the nibble DFA"
+    ]
     enc := Dictionary new
     byte := 0
     bits := 0
@@ -56,6 +63,17 @@ sealed typed Object subclass: HPACKHuffman
         byte < 256 ifTrue: [enc := enc at: byte put: {bits, count}]
       ]
     {enc, self buildDfa}
+
+  /// The shortest non-EOS code length (the nibble DFA's single `emit` slot
+  /// holds at most one byte per nibble, which needs every code longer than
+  /// a nibble — enforced in `buildTables`, so a table typo fails at build,
+  /// not as silent wrong decodes).
+  class sealed minCodeLength: entries :: List min: m :: Integer -> Integer =>
+    entries isEmpty ifTrue: [^m]
+    {byte, _, count} := entries first
+    self minCodeLength: entries rest min: (byte < 256 ifTrue: [
+      m < count ifTrue: [m] ifFalse: [count]
+    ] ifFalse: [m])
 
   /// Build the decode DFA from the raw entries.
   class sealed buildDfa -> Tuple =>
@@ -307,6 +325,7 @@ sealed typed Object subclass: HPACKHuffman
           nibble: ((b bitShift: -4) bitAnd: 15)
           out: out
           last: last
+        step size =:= 2 ifTrue: [^step]
         state := step at: 1
         out := step at: 2
         last := step at: 3
@@ -316,6 +335,7 @@ sealed typed Object subclass: HPACKHuffman
           nibble: (b bitAnd: 15)
           out: out
           last: last
+        step size =:= 2 ifTrue: [^step]
         state := step at: 1
         out := step at: 2
         last := step at: 3
@@ -331,7 +351,9 @@ sealed typed Object subclass: HPACKHuffman
     self invalidEncoding
 
   /// Consume one nibble: `{state, out, last}` (`last` keeps the trailing 7
-  /// bits for the end-of-input padding check).
+  /// bits for the end-of-input padding check), or the 2-tuple
+  /// `invalidEncoding` when the nibble leaves the trie — the caller
+  /// propagates it (a 2-tuple is never a valid step).
   class sealed decodeNibble: dfa :: Tuple state: s :: Integer nibble: q :: Integer out: out :: List last: last :: Integer -> Tuple =>
     {emit, next} := self
       dfaStep: dfa

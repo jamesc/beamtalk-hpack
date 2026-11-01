@@ -65,22 +65,24 @@ against hpax 1.0.4).
 `bench/bench.exs` times hpax 1.0.4 encoding + decoding a 6-header request
 block (`:method/:scheme/:path/:authority`, `cache-control: no-cache`,
 `custom-key: custom-value`), always-Huffman, fresh tables per op, 2000
-iterations. The Beamtalk side timed the same shape (2-header block) over
-2000 iterations. Same machine.
+iterations. `HPACKBenchTest` times the same 6-header block the same way
+(fresh tables both sides, Huffman tables warmed up outside the timing);
+it writes `_build/bench/hpack.txt`. Same machine.
 
 | Op (per iteration) | hpax | hpack | Ratio |
 |--------------------|------|-------|-------|
-| encode + decode round-trip | 3.88µs | ~126µs | ~32x |
-| HPACK encode (always-Huffman) | — | ~91µs | — |
-| HPACK decode | — | ~35µs | — |
+| encode + decode, 6-header block | 3.88µs | 332µs | ~86x |
 | Huffman encode (`www.example.com`) | — | ~11µs | — |
-| Huffman decode | — | ~13µs | — |
+| Huffman decode (`www.example.com`) | — | ~13µs | — |
 
 Notes:
 
+- Methodology prices first contact: with fresh tables per iteration,
+  `custom-key`/`custom-value` always encode as literals-new, so the
+  steady-state indexed traffic of a warm connection is never timed.
 - This is a correctness-first port; the gap is dominated by per-header
-  table scans (61 static entries as tuples) and byte-list handling, not
-  the Huffman code itself.
+  table scans (61 static entries as tuples, walked fresh for every
+  header) and byte-list handling, not the Huffman code itself.
 - Huffman decode was ~108µs/op with hpax's bit-walk shape; the
   nibble-driven DFA in `persistent_term` brought it to ~13µs/op (~8x).
 - `persistent_term` lookups measured ~0.05µs — the build-once design pays
