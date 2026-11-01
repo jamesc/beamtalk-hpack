@@ -1,0 +1,151 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// Port of hpax's `HPAX.TableTest`: static/dynamic lookup, LRU eviction,
+/// protocol and dynamic resizes, plus a seeded add-lookup loop.
+TestCase subclass: HPACKTableTest
+
+  testNew =>
+    t := HPACKTable new: 100 huffman: #always
+    self assert: t protocolMaxTableSize equals: 100
+    self assert: t maxTableSize equals: 100
+    self assert: t huffmanEncoding equals: #always
+    self assert: t entries equals: #()
+    self assert: t size equals: 0
+
+  testAddAndLookupByHeader =>
+    t := HPACKTable new: 10000 huffman: #always
+    // Static full and name hits.
+    self assert: (t lookupByHeader: ":status" value: "200") equals: {#full, 8}
+    self assert: (t lookupByHeader: ":authority" value: nil) equals: {#name, 1}
+    self assert: (t lookupByHeader: ":authority" value: "https://example.com") equals: {#name, 1}
+    // Unknown names miss entirely.
+    self assert: (t lookupByHeader: "my-nonexistent-header" value: nil) equals: #not_found
+    self assert: (t lookupByHeader: "my-nonexistent-header" value: "my-value") equals: #not_found
+    t := t add: ":my-header" value: "my-value"
+    self assert: (t lookupByHeader: ":my-header" value: "my-value") equals: {#full, 62}
+    self assert: (t lookupByHeader: ":my-header" value: "other-value") equals: {#name, 62}
+    self assert: (t lookupByHeader: ":my-header" value: nil) equals: {#name, 62}
+
+  testStaticFullBeatsDynamicFull =>
+    // A static full match wins over a dynamic full match for the same pair.
+    t := HPACKTable new: 10000 huffman: #never
+    t := t add: ":method" value: "GET"
+    self assert: (t lookupByHeader: ":method" value: "GET") equals: {#full, 2}
+
+  testDynamicFullBeatsStaticName =>
+    // A dynamic full match beats a static name-only match.
+    t := HPACKTable new: 10000 huffman: #never
+    t := t add: ":authority" value: "https://example.com"
+    self assert: (t lookupByHeader: ":authority" value: "https://example.com") equals: {#full, 62}
+
+  testLruEviction =>
+    start := HPACKTable dynamicTableStart
+    // Two 40-byte entries fit in 80; the third evicts the oldest.
+    t := HPACKTable new: 80 huffman: #always
+    t := t add: "aaaa" value: "AAAA"
+    t := t add: "bbbb" value: "BBBB"
+    self assert: (t lookupByIndex: start + 1) equals: {(self bin: "aaaa"), (self bin: "AAAA")}
+    self assert: (t lookupByIndex: start) equals: {(self bin: "bbbb"), (self bin: "BBBB")}
+    t := t add: "cccc" value: "CCCC"
+    self assert: (t lookupByIndex: start) equals: {(self bin: "cccc"), (self bin: "CCCC")}
+    self assert: (t lookupByIndex: start + 1) equals: {(self bin: "bbbb"), (self bin: "BBBB")}
+    self assert: (t lookupByIndex: start + 2) isNil
+
+  testLookupByIndexOutOfBounds =>
+    self assert: ((HPACKTable new: 100 huffman: #never) lookupByIndex: 1000) isNil
+    self assert: ((HPACKTable new: 100 huffman: #never) lookupByIndex: 0) isNil
+
+  testLookupByIndexStatic =>
+    self assert: ((HPACKTable new: 100 huffman: #never) lookupByIndex: 1) equals: {(self bin: ":authority"), nil}
+
+  testLookupByIndexDynamic =>
+    t := HPACKTable new: 100 huffman: #never
+    t := t add: "my-header" value: "my-value"
+    self assert: (t lookupByIndex: (HPACKTable staticTableSize) + 1) equals: {(self bin: "my-header"), (self bin: "my-value")}
+
+  testAddTooBigEmpties =>
+    t := HPACKTable new: 40 huffman: #never
+    t := t add: "aaaa" value: "AAAA"
+    t := t add: "bbbbbbbbbb" value: "BBBBBBBBBB"
+    self assert: t entries equals: #()
+    self assert: t size equals: 0
+    self assert: t length equals: 0
+
+  testResizeUp =>
+    t := HPACKTable new: 4096 huffman: #never
+    t := t add: "aaaa" value: "AAAA"
+    t := t resize: 8192
+    self assert: t size equals: 40
+    self assert: t maxTableSize equals: 8192
+    self assert: t protocolMaxTableSize equals: 8192
+
+  testResizeDownAboveSize =>
+    t := HPACKTable new: 4096 huffman: #never
+    t := t add: "aaaa" value: "AAAA"
+    t := t resize: 2048
+    self assert: t size equals: 40
+    self assert: t maxTableSize equals: 2048
+    self assert: t protocolMaxTableSize equals: 2048
+
+  testResizeDownEvicts =>
+    t := HPACKTable new: 4096 huffman: #never
+    t := t add: "aaaa" value: "AAAA"
+    t := t add: "bbbb" value: "BBBB"
+    t := t resize: 60
+    self assert: t size equals: 40
+    self assert: t maxTableSize equals: 60
+    self assert: t protocolMaxTableSize equals: 60
+
+  testDynamicResizeAboveSize =>
+    t := HPACKTable new: 4096 huffman: #never
+    t := t add: "aaaa" value: "AAAA"
+    t := t dynamicResize: 2048
+    self assert: t size equals: 40
+    self assert: t maxTableSize equals: 2048
+    self assert: t protocolMaxTableSize equals: 4096
+
+  testDynamicResizeEvicts =>
+    t := HPACKTable new: 4096 huffman: #never
+    t := t add: "aaaa" value: "AAAA"
+    t := t add: "bbbb" value: "BBBB"
+    t := t dynamicResize: 60
+    self assert: t size equals: 40
+    self assert: t maxTableSize equals: 60
+    self assert: t protocolMaxTableSize equals: 4096
+
+  testAddLookupSeeded =>
+    // hpax's property: a stored header is always found at index 62 in a
+    // fresh table. Names are lowercase letters, 8+ long, so they never
+    // collide with a static full entry.
+    self seedRandom: 40800311
+    200
+      timesRepeat: [
+        name := Binary fromBytes: (self randomLetters: 8 + ((Random nextInteger: 5) - 1))
+        value := Binary fromBytes: (self randomBytes: (Random nextInteger: 17) - 1)
+        t := (HPACKTable new: 10000 huffman: #never) add: name value: value
+        self assert: (t lookupByHeader: name value: value) equals: {#full, 62}
+      ]
+
+  // === Helpers ===
+  bin: s -> Binary => Binary fromIolist: s
+
+  /// See HPACKTypesTest: one FFI line seeds process-dictionary `rand`; all
+  /// draws stay `Random nextInteger:`.
+  seedRandom: s -> Nil =>
+    (Erlang rand) seed: #exsss with: {s, s + 1000, s + 2000}
+    nil
+
+  randomBytes: n -> List =>
+    n =:= 0 ifTrue: [^#()]
+    self randomBytes: n - 1 into: #()
+
+  randomBytes: n into: acc =>
+    n =:= 0 ifTrue: [^acc]
+    self randomBytes: n - 1 into: (acc addFirst: (Random nextInteger: 256) - 1)
+
+  randomLetters: n -> List => self randomLetters: n into: #()
+
+  randomLetters: n into: acc =>
+    n =:= 0 ifTrue: [^acc]
+    self randomLetters: n - 1 into: (acc addFirst: 96 + (Random nextInteger: 26))

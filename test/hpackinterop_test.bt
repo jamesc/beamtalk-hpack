@@ -1,0 +1,117 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// hpax-differential test: blocks encoded by the real hpax 1.0.4
+/// (`test/fixtures/hpax_vectors.txt`, made by `bench/gen_vectors.exs`).
+/// Each sequence shares one evolving table, so dynamic indexing carries
+/// across blocks exactly as it does between an hpax encoder and this one.
+/// For every block this checks both directions: this encoder's bytes equal
+/// hpax's, and this decoder reads hpax's bytes back (with matching table
+/// sizes). This stands in for hpax's joedevivo/hpack interop properties.
+TestCase subclass: HPACKInteropTest
+
+  testInteropVectors =>
+    text := (File readAll: "test/fixtures/hpax_vectors.txt") unwrap
+    blocks := self
+      runVectors: text lines
+      enc: (HPACK newTable: 4096)
+      dec: (HPACK newTable: 4096)
+      count: 0
+    self assert: blocks equals: 40
+
+  runVectors: lines enc: enc dec: dec count: n =>
+    lines isEmpty ifTrue: [^n]
+    (((lines first) words) isEmpty)
+      ifTrue: [
+        ^self
+          runVectors: lines rest
+          enc: enc
+          dec: dec
+          count: n
+      ]
+    head := (lines first) words
+    ((head at: 1) equals: "HPAX-VECTORS")
+      ifTrue: [
+        ^self
+          runVectors: lines rest
+          enc: enc
+          dec: dec
+          count: n
+      ]
+    ((head at: 1) equals: "TABLE")
+      ifTrue: [
+        ^self
+          runVectors: lines rest
+          enc: (self tableFor: (head at: 3))
+          dec: (self tableFor: (head at: 3))
+          count: n
+      ]
+    ((head at: 1) equals: "BLOCK")
+      ifTrue: [
+        ^self
+          runBlock: lines rest
+          count: ((head at: 2) asInteger)
+          enc: enc
+          dec: dec
+          count: n
+      ]
+    self error: "bad fixture line"
+
+  tableFor: w -> HPACKTable =>
+    (w equals: "never") ifTrue: [^HPACK newTable: 4096 huffman: #never]
+    (w equals: "always") ifTrue: [^HPACK newTable: 4096 huffman: #always]
+    self error: "bad fixture table"
+
+  runBlock: lines count: k enc: enc dec: dec count: n =>
+    {headers, rest} := self
+      readHeaders: lines
+      count: k
+      into: #()
+    expected := self hexBytes: (((rest first) words) at: 2)
+    size := ((((rest rest) first) words) at: 2) asInteger
+    tail := rest rest rest
+    {io, enc2} := HPACK encode: headers table: enc
+    self assert: (Binary fromIolist: io) equals: expected
+    {#ok, decoded, dec2} := HPACK decode: expected table: dec
+    self assertHeaders: decoded equals: (self plainHeaders: headers)
+    self assert: enc2 size equals: size
+    self assert: dec2 size equals: size
+    self
+      runVectors: tail
+      enc: enc2
+      dec: dec2
+      count: n + 1
+
+  readHeaders: lines count: k into: acc =>
+    k =:= 0 ifTrue: [^{acc reversed, lines}]
+    h := (lines first) words
+    header := {(self actionFor: (h at: 1)), (self hexBytes: (h at: 2)), (self hexBytes: (h at: 3))}
+    self
+      readHeaders: lines rest
+      count: k - 1
+      into: (acc addFirst: header)
+
+  actionFor: w -> Symbol =>
+    (w equals: "store") ifTrue: [^#store]
+    (w equals: "store_name") ifTrue: [^#store_name]
+    (w equals: "no_store") ifTrue: [^#no_store]
+    (w equals: "never_store") ifTrue: [^#never_store]
+    self error: "bad fixture action"
+
+  hexBytes: s -> Binary =>
+    (s equals: "-") ifTrue: [^Binary fromBytes: #()]
+    (Binary fromHex: s) unwrap
+
+  /// Assert two header lists hold the same bytes (see HPACKTest).
+  assertHeaders: actual equals: expected -> Nil =>
+    self assert: (actual collect: [:h |
+      self flatPair: h
+    ]) equals: (expected collect: [:h | self flatPair: h])
+
+  flatPair: h -> Tuple =>
+    (h at: 2) isNil ifTrue: [
+      ^{(h at: 1) toBytes, nil}
+    ] ifFalse: [^{(h at: 1) toBytes, (h at: 2) toBytes}]
+
+  plainHeaders: headers -> List =>
+    headers collect: [:h | {(h at: 2), (h at: 3)}]

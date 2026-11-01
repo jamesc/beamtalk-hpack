@@ -1,0 +1,185 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// HPACKTypes — prefixed integers (RFC 7541 §5.1) and string literals (§5.2).
+///
+/// A line-for-line port of `HPAX.Types` (hpax 1.0.4), shaped for Beamtalk:
+/// there is no binary construction syntax, so encoding answers byte lists
+/// (iodata) with the flag bits already ORed in, and decoding threads
+/// byte-aligned `Binary` through every helper (the flag bits are skipped
+/// inside the first byte), as in Buccaneer's `FrameCodec` spike.
+///
+/// Decoding answers `{#ok, value, rest}` or `{#error, reason}`, carrying
+/// hpax's reasons (`#bad_integer_encoding`, `#bad_binary_encoding`).
+/// Integer decoding caps values at 2^32 - 1 (RFC 7541 §5.1) so a peer
+/// cannot force unbounded bignum work (hpax CVE-2026-58226).
+sealed typed Object subclass: HPACKTypes
+
+  // === Integer bounds ===
+
+  /// The largest HPACK integer (RFC 7541 §5.1: values fit in 0..2^32 - 1).
+  class sealed maxInteger -> Integer => 4294967295
+
+  /// The largest continuation shift still willing to continue: 2^32 - 1
+  /// needs at most 5 continuation octets (7 bits each).
+  class sealed maxShift -> Integer => 28
+
+  /// Canonicalize bytes to `Binary`. A `String` never `equals:` a `Binary`
+  /// (BT-4173), and `do:` on a `String` yields graphemes, not bytes, so
+  /// every public boundary canonicalizes on the way in — keeping hpax's
+  /// one-binary-type semantics no matter which callers pass. Already-`Binary`
+  /// input answers itself (no flattening round trip).
+  class sealed canon: bytes :: Binary -> Binary =>
+    (bytes class) name =:= #Binary ifTrue: [^bytes]
+    Binary fromIolist: bytes
+
+  // === Prefixed integers (RFC 7541 §5.1) ===
+
+  /// Encode `value` with an n-bit prefix and the high bits `flags`
+  /// (already shifted), answering the bytes (hpax `encode_integer/2` plus
+  /// the caller's flag bits, which Beamtalk cannot prepend as a bitstring).
+  ///
+  /// ## Arguments
+  /// - `value` (Integer) — the non-negative integer to encode.
+  /// - `p` (Integer) — the prefix width in bits (1..8).
+  /// - `flags` (Integer) — the high bits of the first byte, already shifted.
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// HPACKTypes encodeInteger: 10 prefix: 5 flags: 0   // => #(10)
+  /// HPACKTypes encodeInteger: 1337 prefix: 5 flags: 0   // => #(31, 154, 10)
+  /// HPACKTypes encodeInteger: 42 prefix: 8 flags: 0   // => #(42)
+  /// ```
+  class sealed encodeInteger: value :: Integer prefix: p :: Integer flags: flags :: Integer -> List(Integer) =>
+    max := (1 bitShift: p) - 1
+    value < max ifTrue: [^#(flags bitOr: value)]
+    out := #(flags bitOr: max)
+    v := value - max
+    [v >= 128]
+      whileTrue: [
+        out := out ++ #((v bitAnd: 127) bitOr: 128)
+        v := v bitShift: -7
+      ]
+    out ++ #(v)
+
+  /// Decode an integer with an n-bit prefix at the start of `bin`, the
+  /// prefix's high bits ignored (hpax `decode_integer/2`). Answers
+  /// `{#ok, value, rest}` or `{#error, #bad_integer_encoding}`.
+  ///
+  /// ## Arguments
+  /// - `bin` (Binary) — the bytes starting with the prefixed integer.
+  /// - `p` (Integer) — the prefix width in bits (1..8).
+  class sealed decodeInteger: bin :: Binary prefix: p :: Integer -> Tuple =>
+    skip := 8 - p
+    max := (1 bitShift: p) - 1
+    bin match: [
+      <<_f:skip, v:p, rest/binary>> when: [skip >= 0] -> v < max
+        ifTrue: [{#ok, v, rest}]
+        ifFalse: [
+          self
+            decodeRest: rest
+            value: max
+            shift: 0
+        ];
+      _ -> {#error, #bad_integer_encoding}
+    ]
+
+  /// The continuation bytes of a prefixed integer (hpax
+  /// `decode_remaining_integer/3`): a `0` high bit ends, a `1` high bit
+  /// continues. Answers `{#ok, value, rest}` or
+  /// `{#error, #bad_integer_encoding}`.
+  ///
+  /// ## Arguments
+  /// - `bin` (Binary) — the bytes starting with the next continuation octet.
+  /// - `acc` (Integer) — the value accumulated so far.
+  /// - `m` (Integer) — the shift for the next 7 bits.
+  class sealed decodeRest: bin :: Binary value: acc :: Integer shift: m :: Integer -> Tuple =>
+    bin match: [
+      <<0:1, v:7, rest/binary>> -> self finishInteger: acc + (v bitShift: m) rest: rest;
+      <<_:1, v:7, rest/binary>> -> m <= self maxShift
+        ifTrue: [
+          self
+            decodeRest: rest
+            value: acc + (v bitShift: m)
+            shift: m + 7
+        ]
+        ifFalse: [{#error, #bad_integer_encoding}];
+      _ -> {#error, #bad_integer_encoding}
+    ]
+
+  /// Check a terminated integer against the 2^32 - 1 cap.
+  ///
+  /// ## Arguments
+  /// - `value` (Integer) — the decoded integer to check.
+  /// - `rest` (Binary) — the bytes after the integer.
+  class sealed finishInteger: value :: Integer rest: rest :: Binary -> Tuple =>
+    value <= self maxInteger ifTrue: [
+      {#ok, value, rest}
+    ] ifFalse: [{#error, #bad_integer_encoding}]
+
+  // === String literals (RFC 7541 §5.2) ===
+
+  /// Encode `bytes` as a string literal (hpax `encode_binary/2`): the
+  /// length with a 7-bit prefix and the Huffman flag as its high bit,
+  /// then the (possibly Huffman-coded) content, as iodata.
+  ///
+  /// ## Arguments
+  /// - `bytes` (Binary) — the content to encode (`String` is canonicalized).
+  /// - `h` (Boolean) — Huffman-code the content when true.
+  class sealed encodeBinary: bytes :: Binary huffman: h :: Boolean -> List =>
+    bin := self canon: bytes
+    content := h ifTrue: [HPACKHuffman encode: bin] ifFalse: [bin]
+    lenBytes := self
+      encodeInteger: content size
+      prefix: 7
+      flags: (h ifTrue: [128] ifFalse: [0])
+    #(lenBytes, content)
+
+  /// Decode a string literal at the start of `bin` (hpax `decode_binary/1`).
+  /// Answers `{#ok, content, rest}` or `{#error, reason}` (`#bad_binary_encoding`,
+  /// or HPACKHuffman's reason for bad Huffman padding).
+  ///
+  /// ## Arguments
+  /// - `bin` (Binary) — the bytes starting with the string literal.
+  class sealed decodeBinary: bin :: Binary -> Tuple =>
+    bin match: [
+      <<h:1, len7:7, rest/binary>> -> len7 < 127
+        ifTrue: [
+          self
+            decodeContent: rest
+            length: len7
+            huffman: h =:= 1
+        ]
+        ifFalse: [
+          (self
+            decodeRest: rest
+            value: 127
+            shift: 0) match: [
+            {#ok, len, tail} -> self
+              decodeContent: tail
+              length: len
+              huffman: h =:= 1;
+            {#error, reason} -> {#error, reason}
+          ]
+        ];
+      _ -> {#error, #bad_binary_encoding}
+    ]
+
+  /// Split `len` content bytes off `bin` and Huffman-decode them when `h`.
+  ///
+  /// ## Arguments
+  /// - `bin` (Binary) — the bytes starting with the content.
+  /// - `len` (Integer) — the content length in bytes.
+  /// - `h` (Boolean) — Huffman-decode the content when true.
+  class sealed decodeContent: bin :: Binary length: len :: Integer huffman: h :: Boolean -> Tuple =>
+    bin match: [
+      <<content:len/binary, rest/binary>> when: [len >= 0] -> h
+        ifTrue: [
+          (HPACKHuffman decode: content) match: [
+            {#ok, plain} -> {#ok, plain, rest};
+            {#error, reason} -> {#error, reason}
+          ]
+        ]
+        ifFalse: [{#ok, content, rest}];
+      _ -> {#error, #bad_binary_encoding}
+    ]
