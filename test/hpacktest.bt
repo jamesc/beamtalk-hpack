@@ -217,9 +217,9 @@ TestCase subclass: HPACKTest
     {#ok, headers, dec} := HPACK decode: (Binary fromBytes: #(72, 131, 100, 14, 255, 193, 192, 191)) table: dec
     self assertHeaders: headers equals: resp2
     self assert: dec size equals: 222
-    // C.6.3's dump in the RFC text interleaves decode-walk bytes; these
-    // bytes are hpax's encoding of the same headers, verified byte-identical
-    // to the RFC dump's 79 bytes and round-tripping through hpax itself.
+    // C.6.3: the RFC's 79 wire bytes (the RFC text interleaves decode-walk
+    // bytes around them; these were cross-checked byte-identical against
+    // hpax 1.0.4's encoding of the same headers, which also round-trips).
     resp3 := #({":status", "200"}, {"cache-control", "private"}, {"date", "Mon, 21 Oct 2013 20:13:22 GMT"}, {"location", "https://www.example.com"}, {"content-encoding", "gzip"}, {"set-cookie", "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"})
     {#ok, headers, dec} := HPACK decode: (Binary fromBytes: #(136, 193, 97, 150, 208, 122, 190, 148, 16, 84, 212, 68, 168, 32, 5, 149, 4, 11, 129, 102, 224, 132, 166, 45, 27, 255, 192, 90, 131, 155, 217, 171, 119, 173, 148, 231, 130, 29, 215, 242, 230, 199, 179, 53, 223, 223, 205, 91, 57, 96, 213, 175, 39, 8, 127, 54, 114, 193, 171, 39, 15, 181, 41, 31, 149, 135, 49, 96, 101, 192, 3, 237, 78, 229, 177, 6, 61, 80, 7)) table: dec
     self assertHeaders: headers equals: resp3
@@ -289,6 +289,22 @@ TestCase subclass: HPACKTest
         wire := (Binary fromBytes: #(63)) concat: (self wire: io)
         self assert: (HPACK decode: wire table: dec) equals: {#error, #protocol_error}
       ]
+
+  // === One table per direction: a peer behind the encoder reads wrong ===
+  testStalePeerTableDiverges =>
+    // The encoder runs two blocks ahead ([b, a]) while the peer applied
+    // only the first ([a]). The third block names index 62 — `b` on the
+    // encoder's table, `a` on the peer's — so decoding answers `{#ok, ...}`
+    // with the WRONG headers and no error. This pins why each direction
+    // threads its own table: mis-threading corrupts silently.
+    enc := HPACK newTable: 1000
+    dec := HPACK newTable: 1000
+    {io1, enc1} := HPACK encode: #({#store, "a", "A"}) table: enc
+    {_, enc2} := HPACK encode: #({#store, "b", "B"}) table: enc1
+    {#ok, _, dec1} := HPACK decode: (self wire: io1) table: dec
+    {io3, _} := HPACK encode: #({#store, "b", "B2"}) table: enc2
+    {#ok, headers3, _} := HPACK decode: (self wire: io3) table: dec1
+    self assertHeaders: headers3 equals: #({(self bin: "a"), (self bin: "B2")})
 
   // === Seeded loops (hpax's StreamData properties) ===
   testSingleActionCircularSeeded =>

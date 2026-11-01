@@ -286,6 +286,8 @@ sealed typed Object subclass: HPACK
   /// ## Arguments
   /// - `headers` (List) — `{action, name, value}` triples, one action of
   ///   `#store`, `#store_name`, `#no_store`, `#never_store` per header.
+  ///   Anything else (pairs, wrong arities) raises a match error, not
+  ///   `user_error` — hpax crashes on those too.
   /// - `t` (HPACKTable) — the encoding table.
   ///
   /// ## Examples
