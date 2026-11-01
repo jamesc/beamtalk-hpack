@@ -1,0 +1,8 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// Hpack — main class for the hpack library.
+Object subclass: Hpack
+
+  /// Return a greeting string.
+  class greet => "Hello from hpack!"

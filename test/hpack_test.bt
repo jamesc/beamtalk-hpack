@@ -1,0 +1,6 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+TestCase subclass: HpackTest
+
+  testBasic => self assert: (Hpack greet) equals: "Hello from hpack!"

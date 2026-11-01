@@ -1,0 +1,15 @@
+# Copyright 2026 hpack authors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "hpack"
+version = "0.1.0"
+description = "HPACK header compression for HTTP/2, a pure-Beamtalk port of hpax"
+
+[dependencies]
+
+# Every class is `typed`; a type warning fails the build (as Catalina's AGENTS.md).
+[diagnostics]
+type = "error"
+type-annotation = "error"
+dnu = "error"
