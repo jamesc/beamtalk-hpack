@@ -7,7 +7,10 @@
 /// changed per the Buccaneer plan: Elixir generates one function clause per
 /// code at compile time, while here the raw table is a class-side literal
 /// and the working tables are built once per VM into `persistent_term` on
-/// first use — an encode map plus a nibble-driven decode DFA.
+/// first use: `tables` (an encode map plus a nibble-driven decode DFA, the
+/// reference shape) and, derived from it, `fastTables` (a code bitstring
+/// per byte and a byte-driven decode automaton) that `encode:`/`decode:`
+/// actually run on.
 ///
 /// Encoding answers a `Binary`; decoding answers `{#ok, plain}` or
 /// `{#error, {#protocol_error, #invalid_huffman_encoding}}`.
@@ -251,6 +254,92 @@ sealed typed Object subclass: HPACKHuffman
           emit: value
       ]
 
+  // === The fast coding tables (derived once per VM) ===
+
+  /// The coding tables `encode:`/`decode:` run on, derived from `tables`
+  /// once per VM and cached under `#hpack_huffman_fast` (same lifetime rule
+  /// as `tables`): `{codes, nexts, outs, accept}`.
+  ///
+  /// `codes` is a 256-tuple of `Bitstring` codes (byte `b` at `b + 1`), so
+  /// encoding appends one bitstring per input byte.
+  ///
+  /// `nexts`/`outs` flatten the nibble DFA of `tables` into two parallel
+  /// tuples: state `s` on nibble `q` is entry `s * 16 + q + 1`, `nexts`
+  /// holding the next state and `outs` the byte the nibble completes (a
+  /// one-byte `Binary`, or empty — every code is at least 5 bits, so at most
+  /// one ends per nibble). Decoding is then one lookup in each and one
+  /// append per nibble, with no branches. Dead transitions lead to an extra
+  /// sink state that loops on itself and never accepts, so the loop needs
+  /// no dead-input branch either. `accept` holds, per state, whether input
+  /// may end there: the root, or a state at most 7 bits deep on the
+  /// all-ones path (EOS padding — the trailing bits since the last emission
+  /// are exactly the path to the current state).
+  class sealed fastTables -> Tuple =>
+    ((Erlang persistent_term) get: #hpack_huffman_fast with: nil) match: [
+      {codes, nexts, outs, accept} -> {codes, nexts, outs, accept};
+      _ -> self buildAndStoreFast
+    ]
+
+  /// Build the fast tables, store them, and answer them.
+  class sealed buildAndStoreFast -> Tuple =>
+    {_, states} := self tables
+    {nodes, _} := self buildTrie
+    sink := states size
+    steps := (Erlang lists)
+      append: (states asList
+        collect: [:state :: Tuple |
+          (state at: 2) asList collect: [:tr :: Tuple |
+            self step: tr sink: sink
+          ]
+        ])
+    sinkRow := (1 to: 16) collect: [:_i :: Integer | {sink, <<>>}]
+    flat := steps ++ sinkRow
+    ones := self
+      onesPath: nodes
+      id: 0
+      left: 7
+      into: #(0)
+    built := {self buildCodes, (Tuple withAll: (flat collect: [:e :: Tuple |
+      e at: 1
+    ])), (Tuple withAll: (flat collect: [:e :: Tuple |
+      e at: 2
+    ])), (Tuple withAll: ((0 to: sink) collect: [:id :: Integer |
+      ones includes: id
+    ]))}
+    (Erlang persistent_term) put: #hpack_huffman_fast with: built
+    built
+
+  /// The 256 codes as bitstrings, byte order (EOS excluded).
+  class sealed buildCodes -> Tuple =>
+    codes := #()
+    self entries
+      do: [:entry :: Tuple |
+        {byte, bits, count} := entry
+        byte < 256 ifTrue: [codes := codes addFirst: <<bits:count>>]
+      ]
+    Tuple withAll: codes reversed
+
+  /// One `{emit, next}` nibble transition as `{nextState, emittedBytes}`,
+  /// dead transitions going to `sink`.
+  class sealed step: tr :: Tuple sink: sink :: Integer -> Tuple =>
+    {emit, next} := tr
+    next isNil ifTrue: [{sink, <<>>}] ifFalse: [{next, self emitted: emit}]
+
+  /// A nibble's emitted byte as a binary (empty when none).
+  class sealed emitted: emit :: Integer | Nil -> Binary =>
+    emit isNil ifTrue: [<<>>] ifFalse: [<<emit:8>>]
+
+  /// The trie ids along the all-ones path below `id`, `left` bits deep.
+  class sealed onesPath: nodes :: Dictionary id: id :: Integer left: left :: Integer into: acc :: List -> List =>
+    left =:= 0 ifTrue: [^acc]
+    child := (nodes at: id) at: 2
+    child isNil ifTrue: [^acc]
+    self
+      onesPath: nodes
+      id: child
+      left: left - 1
+      into: (acc addFirst: child)
+
   // === Coding ===
 
   /// Huffman-encode bytes (hpax `encode/1`), padding the tail with EOS
@@ -265,33 +354,34 @@ sealed typed Object subclass: HPACKHuffman
   /// // => 12 (RFC 7541 §C.4.1)
   /// ```
   class sealed encode: bytes :: Binary -> Binary =>
-    {enc, _} := self tables
-    bin := HPACKTypes canon: bytes
-    w := 0
-    n := 0
-    out := #()
-    b := 0
-    c := 0
-    l := 0
-    pad := 0
-    bin
-      do: [:byte :: Integer |
-        b := byte
-        {c, l} := enc at: b
-        w := ((w bitShift: l) bitOr: c) bitAnd: ((1 bitShift: (n + l)) - 1)
-        n := n + l
-        [n >= 8]
-          whileTrue: [
-            out := out addFirst: ((w bitShift: (8 - n)) bitAnd: 255)
-            n := n - 8
-          ]
-      ]
-    n > 0
-      ifTrue: [
-        pad := 8 - n
-        out := out addFirst: (((w bitShift: pad) bitOr: ((1 bitShift: pad) - 1)) bitAnd: 255)
-      ]
-    Binary fromBytes: out reversed
+    self encodeBytes: (HPACKTypes canon: bytes)
+
+  /// `encode:` for bytes already canonicalized to `Binary`.
+  class sealed encodeBytes: bin :: Binary -> Binary =>
+    bits := self
+      encodeBits: bin
+      codes: (self fastTables at: 1)
+      acc: <<>>
+    pad := (8 - (bits bitSize % 8)) % 8
+    <<bits/bitstring, ((1 bitShift: pad) - 1):pad>> match: [
+      b :: Binary -> b;
+      _ -> Binary fromBytes: #()
+    ]
+
+  /// Append each byte's code to `acc`, four bytes per step where it can
+  /// (one bitstring append and one call for four codes).
+  class sealed encodeBits: bin :: Binary codes: codes :: Tuple acc: acc :: Bitstring | Binary -> Bitstring | Binary =>
+    bin match: [
+      <<b1:8, b2:8, b3:8, b4:8, rest/binary>> -> self
+        encodeBits: rest
+        codes: codes
+        acc: <<acc/bitstring, (codes at: b1 + 1)/bitstring, (codes at: b2 + 1)/bitstring, (codes at: b3 + 1)/bitstring, (codes at: b4 + 1)/bitstring>>;
+      <<b:8, rest/binary>> -> self
+        encodeBits: rest
+        codes: codes
+        acc: <<acc/bitstring, (codes at: b + 1)/bitstring>>;
+      _ -> acc
+    ]
 
   /// Huffman-decode bytes (hpax `decode/1`). Answers `{#ok, plain}` or
   /// `{#error, {#protocol_error, #invalid_huffman_encoding}}`.
@@ -311,62 +401,37 @@ sealed typed Object subclass: HPACKHuffman
   /// // => {#ok, "hi"} (the plain bytes print as a quoted string)
   /// ```
   class sealed decode: bytes :: Binary -> Tuple =>
-    {_, dfa} := self tables
-    bin := HPACKTypes canon: bytes
-    state := 0
-    out := #()
-    last := 0
-    step := {0, #(), 0}
-    (bin toBytes)
-      do: [:b :: Integer |
-        step := self
-          decodeNibble: dfa
-          state: state
-          nibble: ((b bitShift: -4) bitAnd: 15)
-          out: out
-          last: last
-        step size =:= 2 ifTrue: [^step]
-        state := step at: 1
-        out := step at: 2
-        last := step at: 3
-        step := self
-          decodeNibble: dfa
-          state: state
-          nibble: (b bitAnd: 15)
-          out: out
-          last: last
-        step size =:= 2 ifTrue: [^step]
-        state := step at: 1
-        out := step at: 2
-        last := step at: 3
-      ]
-    depth := (dfa at: state + 1) at: 1
-    depth =:= 0 ifTrue: [^{#ok, Binary fromBytes: out reversed}]
-    (depth >= 1
-      and: [
-        depth <= 7 and: [
-          (last bitAnd: ((1 bitShift: depth) - 1)) =:= ((1 bitShift: depth) - 1)
-        ]
-      ]) ifTrue: [^{#ok, Binary fromBytes: out reversed}]
-    self invalidEncoding
+    self decodeBytes: (HPACKTypes canon: bytes)
 
-  /// Consume one nibble: `{state, out, last}` (`last` keeps the trailing 7
-  /// bits for the end-of-input padding check), or the 2-tuple
-  /// `invalidEncoding` when the nibble leaves the trie — the caller
-  /// propagates it (a 2-tuple is never a valid step).
-  class sealed decodeNibble: dfa :: Tuple state: s :: Integer nibble: q :: Integer out: out :: List last: last :: Integer -> Tuple =>
-    {emit, next} := self
-      dfaStep: dfa
-      state: s
-      nibble: q
-    next isNil ifTrue: [^self invalidEncoding]
-    out2 := out
-    emit ifNotNil: [:v :: Integer | out2 := out addFirst: v]
-    {next, out2, ((last bitShift: 4) bitOr: q) bitAnd: 127}
+  /// `decode:` for bytes already canonicalized to `Binary`.
+  class sealed decodeBytes: bin :: Binary -> Tuple =>
+    {_, nexts, outs, accept} := self fastTables
+    self
+      decodeBits: bin
+      nexts: nexts
+      outs: outs
+      accept: accept
+      state: 0
+      acc: <<>>
 
-  /// One DFA transition: `{emit, next}` (`next` nil for dead input).
-  class sealed dfaStep: dfa :: Tuple state: s :: Integer nibble: q :: Integer -> Tuple =>
-    ((dfa at: s + 1) at: 2) at: q + 1
+  /// Run the nibble automaton over `bin` from `state`, a byte (two
+  /// transitions) per call, appending emitted bytes to `acc`; at the end,
+  /// accept or answer the invalid-encoding error. The state between the
+  /// two nibbles, `nexts at: (s * 16) + hi + 1`, is spelled inline because
+  /// an arm is one expression (a helper call per nibble measured slower).
+  class sealed decodeBits: bin :: Binary nexts: nexts :: Tuple outs: outs :: Tuple accept: accept :: Tuple state: s :: Integer acc: acc :: Binary -> Tuple =>
+    bin match: [
+      <<hi:4, lo:4, rest/binary>> -> self
+        decodeBits: rest
+        nexts: nexts
+        outs: outs
+        accept: accept
+        state: (nexts at: ((nexts at: (s * 16) + hi + 1) * 16) + lo + 1)
+        acc: <<acc/binary, (outs at: (s * 16) + hi + 1)/binary, (outs at: ((nexts at: (s * 16) + hi + 1) * 16) + lo + 1)/binary>>;
+      _ -> (accept at: s + 1) ifTrue: [
+        {#ok, acc}
+      ] ifFalse: [self invalidEncoding]
+    ]
 
   /// The invalid-encoding error (hpax's `{:protocol_error,
   /// :invalid_huffman_encoding}`).

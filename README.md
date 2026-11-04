@@ -71,19 +71,37 @@ it writes `_build/bench/hpack.txt`. Same machine.
 
 | Op (per iteration) | hpax | hpack | Ratio |
 |--------------------|------|-------|-------|
-| encode + decode, 6-header block | 3.88µs | 332µs | ~86x |
-| Huffman encode (`www.example.com`) | — | ~11µs | — |
-| Huffman decode (`www.example.com`) | — | ~13µs | — |
+| encode + decode, 6-header block | 10.9µs | 53µs | ~5x |
+| Huffman encode (`www.example.com`) | — | ~1.9µs | — |
+| Huffman decode (`www.example.com`) | — | ~3.5µs | — |
+
+Measured 2026-11-04 (BT-4362) on a shared 4-core box under heavy load
+(load average ~20), so absolute numbers are noisy: the table shows the best
+of five interleaved runs of each bench (median of five: hpax 19µs, hpack
+64µs). Before BT-4362 the same runs gave hpack 1129µs best / 1272µs median
+(~100x hpax); the README's earlier 332µs vs 3.88µs came from a quieter
+machine. Re-measure on your own hardware before quoting a ratio.
 
 Notes:
 
 - Methodology prices first contact: with fresh tables per iteration,
   `custom-key`/`custom-value` always encode as literals-new, so the
   steady-state indexed traffic of a warm connection is never timed.
-- This is a correctness-first port; the gap is dominated by per-header
-  table scans (61 static entries as tuples, walked fresh for every
-  header) and byte-list handling, not the Huffman code itself.
-- Huffman decode was ~108µs/op with hpax's bit-walk shape; the
-  nibble-driven DFA in `persistent_term` brought it to ~13µs/op (~8x).
+- The static table is indexed once per VM (`HPACKTable staticIndex`, in
+  `persistent_term`): a header lookup is one or two map reads, not a scan
+  of 61 tuples with a dynamic `equals:` per entry (the biggest single
+  term in the profile, ~40% of the old time).
+- Huffman coding runs on tables derived once per VM (`HPACKHuffman
+  fastTables`): encoding appends one precomputed code bitstring per byte
+  (four per call where it can); decoding runs the nibble DFA flattened into
+  two tuples, one byte per call, with a sink state instead of dead-input
+  branches. (hpax's bit-walk shape was ~108µs/op; the first nibble DFA
+  ~13µs/op.)
+- The hot path avoids what costs most in today's codegen: dynamic sends to
+  untyped receivers (`equals:`, `at:` on `Dynamic`), `^` inside blocks (a
+  `try` per call), `Value new:` with a map (a run-time field walk; the
+  keyword constructor is ~30x cheaper), and repeated `canon:` calls (the
+  codec canonicalizes once at its boundary and uses `addBytes:`,
+  `lookupBytes:`, `encodeBytes:`, `decodeBytes:` inside).
 - `persistent_term` lookups measured ~0.05µs — the build-once design pays
-  for itself immediately.
+  for itself immediately; first use builds the tables in a few tens of ms.
