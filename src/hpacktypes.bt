@@ -3,9 +3,10 @@
 
 /// HPACKTypes — prefixed integers (RFC 7541 §5.1) and string literals (§5.2).
 ///
-/// A line-for-line port of `HPAX.Types` (hpax 1.0.4), shaped for Beamtalk:
-/// there is no binary construction syntax, so encoding answers byte lists
-/// (iodata) with the flag bits already ORed in, and decoding threads
+/// A port of `HPAX.Types` (hpax 1.0.4), shaped for Beamtalk: integer
+/// encoding answers byte lists (iodata) with the caller's flag bits already
+/// ORed in (the port predates binary construction, ADR 0143, and the list
+/// shape is public API), string literals answer iodata, and decoding threads
 /// byte-aligned `Binary` through every helper (the flag bits are skipped
 /// inside the first byte), as in Buccaneer's `FrameCodec` spike.
 ///
@@ -28,10 +29,14 @@ sealed typed Object subclass: HPACKTypes
   /// (BT-4173), and `do:` on a `String` yields graphemes, not bytes, so
   /// every public boundary canonicalizes on the way in — keeping hpax's
   /// one-binary-type semantics no matter which callers pass. Already-`Binary`
-  /// input answers itself (no flattening round trip).
+  /// input answers itself (no flattening round trip); a `String` answers its
+  /// UTF-8 bytes straight from the binary pattern (no class lookup, no
+  /// dispatch), and anything else (iolists) is flattened.
   class sealed canon: bytes :: Binary -> Binary =>
-    (bytes class) name =:= #Binary ifTrue: [^bytes]
-    Binary fromIolist: bytes
+    bytes match: [
+      <<b/binary>> -> b;
+      _ -> Binary fromIolist: bytes
+    ]
 
   // === Prefixed integers (RFC 7541 §5.1) ===
 
@@ -52,15 +57,18 @@ sealed typed Object subclass: HPACKTypes
   /// ```
   class sealed encodeInteger: value :: Integer prefix: p :: Integer flags: flags :: Integer -> List(Integer) =>
     max := (1 bitShift: p) - 1
-    value < max ifTrue: [^#(flags bitOr: value)]
-    out := #(flags bitOr: max)
-    v := value - max
-    [v >= 128]
-      whileTrue: [
-        out := out ++ #((v bitAnd: 127) bitOr: 128)
-        v := v bitShift: -7
-      ]
-    out ++ #(v)
+    value < max ifTrue: [
+      #(flags bitOr: value)
+    ] ifFalse: [self continuation: value - max into: #(flags bitOr: max)]
+
+  /// The continuation octets of an integer past its prefix (RFC 7541 §5.1):
+  /// 7 bits each, low first, the high bit set on all but the last.
+  class sealed continuation: v :: Integer into: acc :: List(Integer) -> List(Integer) =>
+    v < 128 ifTrue: [
+      acc ++ #(v)
+    ] ifFalse: [
+      self continuation: (v bitShift: -7) into: acc ++ #((v bitAnd: 127) bitOr: 128)
+    ]
 
   /// Decode an integer with an n-bit prefix at the start of `bin`, the
   /// prefix's high bits ignored (hpax `decode_integer/2`). Answers
@@ -127,13 +135,20 @@ sealed typed Object subclass: HPACKTypes
   /// - `bytes` (Binary) — the content to encode (`String` is canonicalized).
   /// - `h` (Boolean) — Huffman-code the content when true.
   class sealed encodeBinary: bytes :: Binary huffman: h :: Boolean -> List =>
-    bin := self canon: bytes
-    content := h ifTrue: [HPACKHuffman encode: bin] ifFalse: [bin]
-    lenBytes := self
+    self encodeBytes: (self canon: bytes) huffman: h
+
+  /// `encodeBinary:huffman:` for bytes already canonicalized to `Binary`.
+  class sealed encodeBytes: bin :: Binary huffman: h :: Boolean -> List =>
+    h ifTrue: [
+      self literal: (HPACKHuffman encodeBytes: bin) flags: 128
+    ] ifFalse: [self literal: bin flags: 0]
+
+  /// The length (7-bit prefix, `flags` its high bit) then the content.
+  class sealed literal: content :: Binary flags: flags :: Integer -> List =>
+    #((self
       encodeInteger: content size
       prefix: 7
-      flags: (h ifTrue: [128] ifFalse: [0])
-    #(lenBytes, content)
+      flags: flags), content)
 
   /// Decode a string literal at the start of `bin` (hpax `decode_binary/1`).
   /// Answers `{#ok, content, rest}` or `{#error, reason}` (`#bad_binary_encoding`,
@@ -175,7 +190,7 @@ sealed typed Object subclass: HPACKTypes
     bin match: [
       <<content:len/binary, rest/binary>> when: [len >= 0] -> h
         ifTrue: [
-          (HPACKHuffman decode: content) match: [
+          (HPACKHuffman decodeBytes: content) match: [
             {#ok, plain} -> {#ok, plain, rest};
             {#error, reason} -> {#error, reason}
           ]

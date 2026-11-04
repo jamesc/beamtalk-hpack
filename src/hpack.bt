@@ -43,9 +43,6 @@ sealed typed Object subclass: HPACK
   /// - `maxSize` (Integer) — the protocol maximum table size in bytes.
   /// - `h` (Symbol) — `#always` to Huffman-code literals, `#never` for plain.
   class sealed newTable: maxSize :: Integer huffman: h :: Symbol -> HPACKTable =>
-    (#(#always, #never) includes: h) ifFalse: [
-      self error: "unknown huffman encoding: {h}"
-    ]
     HPACKTable new: maxSize huffman: h
 
   /// Resize a table to a new protocol maximum (hpax `resize/2`).
@@ -72,20 +69,13 @@ sealed typed Object subclass: HPACK
   /// ```
   class sealed decode: hbf :: Binary table: t :: HPACKTable -> Tuple =>
     bin := HPACKTypes canon: hbf
-    bin size =:= 0
-      ifTrue: [
-        ^self
-          decodeHeaders: bin
-          table: t
-          acc: #()
-      ]
-    ((bin byteAt: 0) bitAnd: 224) =:= 32 ifTrue: [
-      ^self decodeResize: bin table: t
+    bin match: [
+      <<0:1, 0:1, 1:1, _:5, _/binary>> -> self decodeResize: bin table: t;
+      _ -> self
+        decodeHeaders: bin
+        table: t
+        acc: #()
     ]
-    self
-      decodeHeaders: bin
-      table: t
-      acc: #()
 
   /// A dynamic table size update at the start of a block (RFC 7541 §4.2,
   /// §6.3): resize when within the protocol maximum, else `#protocol_error`.
@@ -100,7 +90,6 @@ sealed typed Object subclass: HPACK
   /// Decode indexed and literal fields until the input runs out (hpax
   /// `decode_headers/3`). `acc` holds the headers newest-first.
   class sealed decodeHeaders: bin :: Binary table: t :: HPACKTable acc: acc :: List -> Tuple =>
-    bin size =:= 0 ifTrue: [^{#ok, acc reversed, t}]
     bin match: [
       <<1:1, _:7, _/binary>> -> self
         decodeIndexed: bin
@@ -114,7 +103,9 @@ sealed typed Object subclass: HPACK
         decodePlain: bin
         table: t
         acc: acc;
-      _ -> {#error, #protocol_error}
+      _ -> bin size =:= 0 ifTrue: [
+        {#ok, acc reversed, t}
+      ] ifFalse: [{#error, #protocol_error}]
     ]
 
   /// An indexed header field (RFC 7541 §6.1).
@@ -169,7 +160,7 @@ sealed typed Object subclass: HPACK
     (HPACKTypes decodeBinary: bin) match: [
       {#ok, value, rest} -> self
         decodeHeaders: rest
-        table: (t add: name value: value)
+        table: (t addBytes: name value: value)
         acc: (acc addFirst: {name, value});
       {#error, reason} -> {#error, reason}
     ]
@@ -266,7 +257,7 @@ sealed typed Object subclass: HPACK
         ifTrue: [
           self
             decodeHeaders: rest
-            table: (t add: name value: value)
+            table: (t addBytes: name value: value)
             acc: (acc addFirst: {name, value})
         ]
         ifFalse: [
@@ -325,14 +316,28 @@ sealed typed Object subclass: HPACK
   /// Encode one header per lookup, threading `{iodata, table}` (hpax
   /// `encode_headers/3`).
   class sealed encodeHeaders: headers :: List table: t :: HPACKTable acc: acc :: List -> Tuple =>
-    headers isEmpty ifTrue: [^{acc, t}]
-    {action, name, value} := headers first
-    self validateAction: action
-    self validateHeader: name value: value
-    h := (t huffmanEncoding) =:= #always
-    (t lookupByHeader: name value: value) match: [
+    headers isEmpty
+      ifTrue: [{acc, t}]
+      ifFalse: [
+        {action, name, value} := headers first
+        checked := self validateAction: action
+        {n, v} := self headerBytes: name value: value
+        self
+          encodeHeader: checked
+          name: n
+          value: v
+          table: t
+          rest: headers rest
+          acc: acc
+      ]
+
+  /// Encode one validated header (bytes canonicalized once, here) by its
+  /// table lookup.
+  class sealed encodeHeader: action :: Symbol name: name :: Binary value: value :: Binary table: t :: HPACKTable rest: rest :: List acc: acc :: List -> Tuple =>
+    h := t huffmanEncoding =:= #always
+    (t lookupBytes: name value: value) match: [
       {#full, index} -> self
-        encodeHeaders: headers rest
+        encodeHeaders: rest
         table: t
         acc: #(acc, (HPACKTypes
           encodeInteger: index
@@ -345,87 +350,76 @@ sealed typed Object subclass: HPACK
         value: value
         huffman: h
         table: t
-        rest: headers rest
+        rest: rest
         acc: acc;
-      #not_found -> self
+      _ -> self
         encodeNew: action
         name: name
         value: value
         huffman: h
         table: t
-        rest: headers rest
+        rest: rest
         acc: acc
     ]
 
   /// Encode a header whose name is indexed (hpax's `{:name, index}` cases).
   class sealed encodeNamed: action :: Symbol index: i :: Integer name: n :: Binary value: v :: Binary huffman: h :: Boolean table: t :: HPACKTable rest: rest :: List acc: acc :: List -> Tuple =>
-    action =:= #store
-      ifTrue: [
-        ^self
-          encodeHeaders: rest
-          table: (t add: n value: v)
-          acc: #(acc, (self
-            literalIndexing: i
-            value: v
-            huffman: h))
-      ]
-    action =:= #never_store
-      ifTrue: [
-        ^self
-          encodeHeaders: rest
-          table: t
-          acc: #(acc, (self
-            literalNever: i
-            value: v
-            huffman: h))
-      ]
-    self
-      encodeHeaders: rest
-      table: t
-      acc: #(acc, (self
-        literalPlain: i
-        value: v
-        huffman: h))
+    action match: [
+      #store -> self
+        encodeHeaders: rest
+        table: (t addBytes: n value: v)
+        acc: #(acc, (self
+          literalIndexing: i
+          value: v
+          huffman: h));
+      #never_store -> self
+        encodeHeaders: rest
+        table: t
+        acc: #(acc, (self
+          literalNever: i
+          value: v
+          huffman: h));
+      _ -> self
+        encodeHeaders: rest
+        table: t
+        acc: #(acc, (self
+          literalPlain: i
+          value: v
+          huffman: h))
+    ]
 
   /// Encode a header whose name is new (hpax's `:not_found` cases).
   class sealed encodeNew: action :: Symbol name: n :: Binary value: v :: Binary huffman: h :: Boolean table: t :: HPACKTable rest: rest :: List acc: acc :: List -> Tuple =>
-    action =:= #store
-      ifTrue: [
-        ^self
-          encodeHeaders: rest
-          table: (t add: n value: v)
-          acc: #(acc, (self
-            literalIndexingNew: n
-            value: v
-            huffman: h))
-      ]
-    action =:= #store_name
-      ifTrue: [
-        ^self
-          encodeHeaders: rest
-          table: (t add: n value: v)
-          acc: #(acc, (self
-            literalIndexingNew: n
-            value: v
-            huffman: h))
-      ]
-    action =:= #never_store
-      ifTrue: [
-        ^self
-          encodeHeaders: rest
-          table: t
-          acc: #(acc, (self
-            literalNeverNew: n
-            value: v
-            huffman: h))
-      ]
-    self
-      encodeHeaders: rest
-      table: t
-      acc: #(acc, (self
-        literalPlainNew: n
-        value: v
-        huffman: h))
+    action match: [
+      #store -> self
+        encodeHeaders: rest
+        table: (t addBytes: n value: v)
+        acc: #(acc, (self
+          literalIndexingNew: n
+          value: v
+          huffman: h));
+      #store_name -> self
+        encodeHeaders: rest
+        table: (t addBytes: n value: v)
+        acc: #(acc, (self
+          literalIndexingNew: n
+          value: v
+          huffman: h));
+      #never_store -> self
+        encodeHeaders: rest
+        table: t
+        acc: #(acc, (self
+          literalNeverNew: n
+          value: v
+          huffman: h));
+      _ -> self
+        encodeHeaders: rest
+        table: t
+        acc: #(acc, (self
+          literalPlainNew: n
+          value: v
+          huffman: h))
+    ]
 
   /// An indexed header field (RFC 7541 §6.1): `1` plus a 7-bit prefix.
   class sealed encodeIndexed: index :: Integer -> List =>
@@ -439,42 +433,56 @@ sealed typed Object subclass: HPACK
     #((HPACKTypes
       encodeInteger: index
       prefix: 6
-      flags: 64), (HPACKTypes encodeBinary: v huffman: h))
+      flags: 64), (HPACKTypes encodeBytes: v huffman: h))
 
   /// A literal with incremental indexing and a new name (§6.2.1).
   class sealed literalIndexingNew: name :: Binary value: v :: Binary huffman: h :: Boolean -> List =>
-    #(#(64), (HPACKTypes encodeBinary: name huffman: h), (HPACKTypes encodeBinary: v huffman: h))
+    #(#(64), (HPACKTypes encodeBytes: name huffman: h), (HPACKTypes encodeBytes: v huffman: h))
 
   /// A literal without indexing and an indexed name (§6.2.2).
   class sealed literalPlain: index :: Integer value: v :: Binary huffman: h :: Boolean -> List =>
     #((HPACKTypes
       encodeInteger: index
       prefix: 4
-      flags: 0), (HPACKTypes encodeBinary: v huffman: h))
+      flags: 0), (HPACKTypes encodeBytes: v huffman: h))
 
   /// A literal without indexing and a new name (§6.2.2).
   class sealed literalPlainNew: name :: Binary value: v :: Binary huffman: h :: Boolean -> List =>
-    #(#(0), (HPACKTypes encodeBinary: name huffman: h), (HPACKTypes encodeBinary: v huffman: h))
+    #(#(0), (HPACKTypes encodeBytes: name huffman: h), (HPACKTypes encodeBytes: v huffman: h))
 
   /// A never-indexed literal with an indexed name (§6.2.3).
   class sealed literalNever: index :: Integer value: v :: Binary huffman: h :: Boolean -> List =>
     #((HPACKTypes
       encodeInteger: index
       prefix: 4
-      flags: 16), (HPACKTypes encodeBinary: v huffman: h))
+      flags: 16), (HPACKTypes encodeBytes: v huffman: h))
 
   /// A never-indexed literal with a new name (§6.2.3).
   class sealed literalNeverNew: name :: Binary value: v :: Binary huffman: h :: Boolean -> List =>
-    #(#(16), (HPACKTypes encodeBinary: name huffman: h), (HPACKTypes encodeBinary: v huffman: h))
+    #(#(16), (HPACKTypes encodeBytes: name huffman: h), (HPACKTypes encodeBytes: v huffman: h))
 
-  /// Check a header action (hpax's `action in @valid_header_actions` guard).
-  class sealed validateAction: action :: Symbol -> Nil =>
-    (#(#store, #store_name, #no_store, #never_store) includes: action) ifTrue: [
-      ^nil
+  /// Check a header action (hpax's `action in @valid_header_actions` guard),
+  /// answering it.
+  class sealed validateAction: action :: Symbol -> Symbol =>
+    action match: [
+      #store -> action;
+      #store_name -> action;
+      #no_store -> action;
+      #never_store -> action;
+      _ -> self error: "unknown header action: {action}"
     ]
-    self error: "unknown header action: {action}"
 
-  /// Check a header name and value are binaries (hpax `validate_header/2`).
-  class sealed validateHeader: name :: Object value: value :: Object -> Nil =>
-    ((name isKindOf: Binary) and: [value isKindOf: Binary]) ifTrue: [^nil]
+  /// Check a header name and value are binaries (hpax `validate_header/2`),
+  /// answering them canonicalized to `Binary` as `{name, value}`.
+  class sealed headerBytes: name :: Object value: value :: Object -> Tuple =>
+    name match: [
+      n :: Binary -> value match: [
+        v :: Binary -> {(HPACKTypes canon: n), (HPACKTypes canon: v)};
+        _ -> self badHeader: name value: value
+      ];
+      _ -> self badHeader: name value: value
+    ]
+
+  /// Raise the non-binary header error.
+  class sealed badHeader: name :: Object value: value :: Object -> Tuple =>
     self error: "expected header name/value to be strings, got: {name}/{value}"
