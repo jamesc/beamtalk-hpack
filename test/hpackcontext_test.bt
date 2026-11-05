@@ -1,0 +1,187 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// `HPACKContext`: the actor facade answers the same bytes and headers as
+/// the functional `HPACK` API, keeps its table between calls, and signals
+/// resizes. Seeded loops mirror `HPACKTest`'s round trips through two
+/// actors (one per direction).
+TestCase subclass: HPACKContextTest
+
+  testNew =>
+    ctx := HPACKContext maxSize: 100
+    self assert: ctx table protocolMaxTableSize equals: 100
+    self assert: ctx table huffmanEncoding equals: #never
+
+  testNewHuffman =>
+    ctx := HPACKContext maxSize: 100 huffman: #always
+    self assert: ctx table huffmanEncoding equals: #always
+
+  testNewBadHuffman =>
+    self should: [
+      HPACKContext maxSize: 100 huffman: #sometimes
+    ] raise: #user_error
+
+  testEncodeAnswersBinary =>
+    // RFC 7541 §C.3.1, no Huffman.
+    ctx := HPACKContext maxSize: 1000
+    wire := ctx encode: #({#store, ":method", "GET"}, {#store, ":scheme", "http"}, {#store, ":path", "/"}, {#store, ":authority", "www.example.com"})
+    self assert: (wire isKindOf: Binary)
+    self assert: wire toBytes equals: #(130, 134, 132, 65, 15, 119, 119, 119, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109)
+    self assert: ctx table size equals: 57
+
+  testEncodeHuffman =>
+    // RFC 7541 §C.4.1, Huffman.
+    ctx := HPACKContext maxSize: 1000 huffman: #always
+    wire := ctx encode: #store headers: #({":method", "GET"}, {":scheme", "http"}, {":path", "/"}, {":authority", "www.example.com"})
+    self assert: wire toBytes equals: #(130, 134, 132, 65, 140, 241, 227, 194, 229, 242, 58, 107, 160, 171, 144, 244, 255)
+
+  testTableCarriesAcrossCalls =>
+    // RFC 7541 §C.3.2: the second request reuses the first one's entry 62.
+    enc := HPACKContext maxSize: 4096
+    enc encode: #store headers: #({":method", "GET"}, {":scheme", "http"}, {":path", "/"}, {":authority", "www.example.com"})
+    wire := enc encode: #store headers: #({":method", "GET"}, {":scheme", "http"}, {":path", "/"}, {":authority", "www.example.com"}, {"cache-control", "no-cache"})
+    self assert: wire toBytes equals: #(130, 134, 132, 190, 88, 8, 110, 111, 45, 99, 97, 99, 104, 101)
+    self assert: enc table size equals: 110
+
+  testDecode =>
+    // RFC 7541 §C.2.1.
+    dec := HPACKContext maxSize: 4096
+    headers := (dec decode: (Binary fromBytes: #(64, 10, 99, 117, 115, 116, 111, 109, 45, 107, 101, 121, 13, 99, 117, 115, 116, 111, 109, 45, 104, 101, 97, 100, 101, 114))) unwrap
+    self assertHeaders: headers equals: #({"custom-key", "custom-header"})
+    self assert: dec table size equals: 55
+
+  testDecodeErrorKeepsTable =>
+    dec := HPACKContext maxSize: 4096
+    (dec decode: (Binary fromBytes: #(64, 1, 97, 1, 65))) unwrap
+    // Index 63 is past the one-entry dynamic table.
+    self assert: (dec decode: (Binary fromBytes: #(191))) isError
+    self assert: dec table entries size equals: 1
+    // Index 62 is still the stored entry.
+    self assertHeaders: (dec decode: (Binary fromBytes: #(190))) unwrap equals: #({"a", "A"})
+
+  testDecodeTruncatedIsError =>
+    dec := HPACKContext maxSize: 4096
+    self assert: (dec decode: (Binary fromBytes: #(65))) isError
+
+  testResizeSignalledToPeer =>
+    enc := HPACKContext maxSize: 4096
+    dec := HPACKContext maxSize: 4096
+    enc resize: 100
+    self assert: enc table protocolMaxTableSize equals: 100
+    wire := enc encode: #({#store, "a", "A"})
+    // A dynamic table size update to 100 (RFC 7541 §6.3) leads the block.
+    self assert: (wire toBytes at: 1) equals: 63
+    self assert: (wire toBytes at: 2) equals: 69
+    self assertHeaders: (dec decode: wire) unwrap equals: #({"a", "A"})
+    self assert: dec table maxTableSize equals: 100
+    // Signalled once: the next block carries no update.
+    wire := enc encode: #({#store, "a", "A"})
+    self assert: wire toBytes equals: #(190)
+
+  testDecoderResizeCapsUpdates =>
+    enc := HPACKContext maxSize: 4096
+    dec := HPACKContext maxSize: 4096
+    dec resize: 50
+    enc resize: 100
+    self assert: (dec decode: (enc encode: #({#store, "a", "A"}))) isError
+
+  // === Seeded loops (as HPACKTest, through the actors) ===
+  testRoundTripSeeded =>
+    self seedRandom: 40800601
+    enc := HPACKContext maxSize: 500
+    dec := HPACKContext maxSize: 500
+    100
+      timesRepeat: [
+        headers := self randomActionHeaders: (Random nextInteger: 4) - 1
+        result := dec decode: (enc encode: headers)
+        self assertHeaders: result unwrap equals: (self plainHeaders: headers)
+      ]
+    self assert: dec table size equals: enc table size
+    self assert: dec table length equals: enc table length
+
+  testSingleActionRoundTripSeeded =>
+    self seedRandom: 40800602
+    enc := HPACKContext maxSize: 500 huffman: #always
+    dec := HPACKContext maxSize: 500
+    100
+      timesRepeat: [
+        action := #(#store, #store_name, #no_store, #never_store) at: (Random nextInteger: 4)
+        headers := self randomHeaders: (Random nextInteger: 4) - 1
+        result := dec decode: (enc encode: action headers: headers)
+        self assertHeaders: result unwrap equals: headers
+      ]
+    self assert: dec table size equals: enc table size
+    self assert: dec table length equals: enc table length
+
+  testMatchesFunctionalApiSeeded =>
+    // The actor answers exactly the bytes the functional API does.
+    self seedRandom: 40800603
+    ctx := HPACKContext maxSize: 300
+    t := HPACK newTable: 300
+    50
+      timesRepeat: [
+        (Random nextInteger: 10) =:= 1
+          ifTrue: [
+            n := 50 + (Random nextInteger: 300)
+            ctx resize: n
+            t := HPACK resize: t newMax: n
+          ]
+        headers := self randomActionHeaders: (Random nextInteger: 4) - 1
+        // Plain assignments: a destructuring write to `t` here did not
+        // reach the next iteration, re-signalling a popped resize.
+        encoded := HPACK encode: headers table: t
+        t := encoded at: 2
+        self assert: (ctx encode: headers) toBytes equals: (Binary fromIolist: (encoded at: 1)) toBytes
+      ]
+    self assert: ctx table size equals: t size
+    self assert: ctx table length equals: t length
+
+  // === Helpers (as HPACKTest) ===
+
+  /// See HPACKTypesTest: one FFI line seeds process-dictionary `rand`; all
+  /// draws stay `Random nextInteger:`.
+  seedRandom: s -> Nil =>
+    (Erlang rand) seed: #exsss with: {s, s + 1000, s + 2000}
+    nil
+
+  /// Assert two header lists hold the same bytes, whatever their classes
+  /// (decoded output mixes `String` static hits with `Binary` literals).
+  assertHeaders: actual equals: expected -> Nil =>
+    self assert: (actual collect: [:h |
+      self flatPair: h
+    ]) equals: (expected collect: [:h | self flatPair: h])
+
+  flatPair: h -> Tuple => {(h at: 1) toBytes, (h at: 2) toBytes}
+
+  plainHeaders: headers -> List =>
+    headers collect: [:h | {(h at: 2), (h at: 3)}]
+
+  randomBytes: n -> List =>
+    n =:= 0 ifTrue: [^#()]
+    self randomBytes: n - 1 into: #()
+
+  randomBytes: n into: acc =>
+    n =:= 0 ifTrue: [^acc]
+    self randomBytes: n - 1 into: (acc addFirst: (Random nextInteger: 256) - 1)
+
+  randomName -> Binary =>
+    (Random nextInteger: 3) =:= 1
+      ifTrue: [
+        HPACKTypes canon: (self staticNames at: (Random nextInteger: self staticNames size))
+      ]
+      ifFalse: [
+        Binary fromBytes: (self randomBytes: 1 + ((Random nextInteger: 10) - 1))
+      ]
+
+  staticNames -> List => HPACKTable staticTable collect: [:e | e at: 1]
+
+  randomHeaders: n -> List =>
+    n =:= 0 ifTrue: [^#()]
+    #({self randomName, (Binary fromBytes: (self randomBytes: (Random nextInteger: 17) - 1))})
+      ++ (self randomHeaders: n - 1)
+
+  randomActionHeaders: n -> List =>
+    (self randomHeaders: n)
+      collect: [:h |
+        {#(#store, #store_name, #no_store, #never_store) at: (Random nextInteger: 4), (h at: 1), (h at: 2)}
+      ]

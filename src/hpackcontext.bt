@@ -1,0 +1,109 @@
+// Copyright 2026 hpack authors
+// SPDX-License-Identifier: Apache-2.0
+
+/// HPACKContext — an `Actor` holding one `HPACKTable`, so callers stop
+/// threading `{iodata, table}` / `{#ok, headers, table}` tuples by hand.
+///
+/// Create one context per direction per connection: an encoder for the
+/// blocks you send and a decoder for the blocks you receive. `encode:`
+/// answers the wire bytes as a `Binary`; `decode:` answers `Result ok:` with
+/// the headers or `Result error:` with hpax's reason (see `HPACK`). A failed
+/// decode leaves the table unchanged — RFC 7541 treats it as a connection
+/// error (`COMPRESSION_ERROR`), so the context should not be reused anyway.
+///
+/// A facade only: the functional `HPACK`/`HPACKTable` API is unchanged and
+/// remains the right choice for code that already threads its connection
+/// state as values. Blocks on one connection are order-dependent (RFC 7541
+/// §2.3.2), so the serialisation an actor imposes costs no parallelism.
+///
+/// ## Examples
+/// ```beamtalk
+/// enc := HPACKContext maxSize: 4096 huffman: #always
+/// dec := HPACKContext maxSize: 4096
+/// wire := enc encode: #({#store, ":method", "GET"})
+/// (dec decode: wire) unwrap   // => #({":method", "GET"})
+/// ```
+sealed typed Actor subclass: HPACKContext
+  state: table :: HPACKTable
+
+  // === Construction ===
+
+  /// Spawn a context with a never-Huffman table (as `HPACK newTable:`).
+  ///
+  /// ## Arguments
+  /// - `n` (Integer) — the protocol maximum table size in bytes.
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// ctx := HPACKContext maxSize: 4096
+  /// ctx table maxTableSize   // => 4096
+  /// ```
+  class sealed maxSize: n :: Integer -> HPACKContext =>
+    self maxSize: n huffman: #never
+
+  /// Spawn a context with the given Huffman policy, `#always` or `#never`
+  /// (as `HPACK newTable:huffman:`). Anything else raises in the caller.
+  ///
+  /// ## Arguments
+  /// - `n` (Integer) — the protocol maximum table size in bytes.
+  /// - `h` (Symbol) — `#always` to Huffman-code literals, `#never` for plain.
+  class sealed maxSize: n :: Integer huffman: h :: Symbol -> HPACKContext =>
+    self spawnWith: #{#table => (HPACK newTable: n huffman: h)}
+
+  // === Encoding ===
+
+  /// Encode `{action, name, value}` triples (as `HPACK encode:table:`),
+  /// answering the header block as a `Binary` and keeping the updated table.
+  /// Pending resizes go first (RFC 7541 §4.2).
+  ///
+  /// ## Arguments
+  /// - `headers` (List) — `{action, name, value}` triples, one action of
+  ///   `#store`, `#store_name`, `#no_store`, `#never_store` per header.
+  encode: headers :: List -> Binary =>
+    {io, t} := HPACK encode: headers table: self.table
+    self.table := t
+    Binary fromIolist: io
+
+  /// Encode `{name, value}` pairs with one action for all (as
+  /// `HPACK encode:headers:table:`).
+  ///
+  /// ## Arguments
+  /// - `action` (Symbol) — one of `#store`, `#store_name`, `#no_store`, `#never_store`.
+  /// - `headers` (List) — `{name, value}` pairs.
+  encode: action :: Symbol headers: headers :: List -> Binary =>
+    {io, t} := HPACK
+      encode: action
+      headers: headers
+      table: self.table
+    self.table := t
+    Binary fromIolist: io
+
+  // === Decoding ===
+
+  /// Decode a header block fragment (as `HPACK decode:table:`), answering
+  /// `Result ok:` with the `{name, value}` headers, or `Result error:` with
+  /// hpax's reason and the table left as it was.
+  ///
+  /// ## Arguments
+  /// - `hbf` (Binary) — the header block fragment bytes.
+  decode: hbf :: Binary -> Result(List, Object) =>
+    outcome := HPACK decode: hbf table: self.table
+    (outcome at: 1) =:= #ok ifFalse: [^Result error: (outcome at: 2)]
+    {_, headers, t} := outcome
+    self.table := t
+    Result ok: headers
+
+  // === Tables ===
+
+  /// Resize the table to a new protocol maximum (as `HPACK resize:newMax:`).
+  /// On an encoder, shrinking is signalled to the peer at the start of the
+  /// next `encode:`; on a decoder, it caps the size updates `decode:` accepts.
+  ///
+  /// ## Arguments
+  /// - `n` (Integer) — the new protocol maximum size in bytes.
+  resize: n :: Integer -> Nil =>
+    self.table := HPACK resize: self.table newMax: n
+    nil
+
+  /// A snapshot of the current table (an immutable `HPACKTable` value).
+  table -> HPACKTable => self.table
