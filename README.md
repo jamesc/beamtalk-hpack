@@ -18,6 +18,7 @@ wire := Binary fromIolist: io
 | `HPACKTable` | `HPAX.Table` | Static table (RFC 7541 Appendix A) + dynamic table, eviction, resizes |
 | `HPACKTypes` | `HPAX.Types` | Prefixed integers (§5.1) and string literals (§5.2) |
 | `HPACKHuffman` | `HPAX.Huffman` | Huffman code (Appendix B), tables built once per VM into `persistent_term` |
+| `HPACKContext` | — | `Actor` facade holding one table: `encode:` answers a `Binary`, `decode:` a `Result` |
 
 Every class is `typed`; a type warning fails the build.
 
@@ -40,6 +41,26 @@ HPACK encode: #store headers: pairs table: t   // one action for all
 // {#protocol_error, #invalid_huffman_encoding}).
 HPACK decode: wire table: t
 ```
+
+### Actor facade
+
+For simple clients, tests and the REPL, `HPACKContext` holds the table in an
+`Actor` (one per direction per connection), so no tuples reach the call site:
+
+```beamtalk
+enc := HPACKContext maxSize: 4096 huffman: #always
+dec := HPACKContext maxSize: 4096
+wire := enc encode: #({#store, ":method", "GET"})   // a Binary
+enc encode: #store headers: pairs                    // one action for all
+(dec decode: wire) unwrap                            // headers; a failed
+                                                     // decode answers Result error:
+enc resize: 256                                      // signalled on the next encode:
+enc table                                            // snapshot HPACKTable
+```
+
+A synchronous actor call costs ~1.6µs against ~35µs/~91µs for a small HPACK
+decode/encode, and blocks on one connection are order-dependent anyway.
+Code that threads connection state as values should keep the functional API.
 
 Lower layers (`HPACKTypes encodeInteger:prefix:flags:`,
 `HPACKTable lookupByIndex:` / `lookupByHeader:value:`,
