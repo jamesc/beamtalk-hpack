@@ -7,17 +7,38 @@
 /// across blocks exactly as it does between an hpax encoder and this one.
 /// For every block this checks both directions: this encoder's bytes equal
 /// hpax's, and this decoder reads hpax's bytes back (with matching table
-/// sizes). This stands in for hpax's joedevivo/hpack interop properties.
+/// sizes). The sequences cover a 4096-byte table in both Huffman modes, a
+/// 256-byte table that keeps evicting, and dynamic table size updates
+/// (`RESIZE` between blocks). `ERROR` lines are blocks hpax rejects, with the
+/// reason it gives. This stands in for hpax's joedevivo/hpack interop
+/// properties.
 TestCase subclass: HPACKInteropTest
 
   testInteropVectors =>
-    text := (File readAll: "test/fixtures/hpax_vectors.txt") unwrap
     blocks := self
-      runVectors: text lines
+      runVectors: self fixtureLines
       enc: (HPACK newTable: 4096)
       dec: (HPACK newTable: 4096)
       count: 0
-    self assert: blocks equals: 40
+    self assert: blocks equals: 73
+
+  /// Each `ERROR <max-size> <hex> <reason> [<detail>]` block fails to decode
+  /// on a fresh table with the same reason hpax gives.
+  testInteropErrors =>
+    count := 0
+    self fixtureLines do: [:line |
+      w := line words
+      (w isEmpty) ifFalse: [
+        ((w at: 1) equals: "ERROR") ifTrue: [
+          table := HPACK newTable: (w at: 2) asInteger
+          self assert: (HPACK decode: (self hexBytes: (w at: 3)) table: table) equals: {#error, (self reasonFrom: w)}
+          count := count + 1
+        ]
+      ]
+    ]
+    self assert: count equals: 11
+
+  fixtureLines -> List => (File readAll: "test/fixtures/hpax_vectors.txt") unwrap lines
 
   runVectors: lines enc: enc dec: dec count: n =>
     lines isEmpty ifTrue: [^n]
@@ -42,8 +63,25 @@ TestCase subclass: HPACKInteropTest
       ifTrue: [
         ^self
           runVectors: lines rest
-          enc: (self tableFor: (head at: 3))
-          dec: (self tableFor: (head at: 3))
+          enc: (self tableFor: (head at: 3) max: (head at: 2) asInteger)
+          dec: (self tableFor: (head at: 3) max: (head at: 2) asInteger)
+          count: n
+      ]
+    ((head at: 1) equals: "RESIZE")
+      ifTrue: [
+        max := (head at: 2) asInteger
+        ^self
+          runVectors: lines rest
+          enc: (HPACK resize: enc newMax: max)
+          dec: (HPACK resize: dec newMax: max)
+          count: n
+      ]
+    ((head at: 1) equals: "ERROR")
+      ifTrue: [
+        ^self
+          runVectors: lines rest
+          enc: enc
+          dec: dec
           count: n
       ]
     ((head at: 1) equals: "BLOCK")
@@ -57,10 +95,26 @@ TestCase subclass: HPACKInteropTest
       ]
     self error: "bad fixture line"
 
-  tableFor: w -> HPACKTable =>
-    (w equals: "never") ifTrue: [^HPACK newTable: 4096 huffman: #never]
-    (w equals: "always") ifTrue: [^HPACK newTable: 4096 huffman: #always]
+  tableFor: w max: max :: Integer -> HPACKTable =>
+    (w equals: "never") ifTrue: [^HPACK newTable: max huffman: #never]
+    (w equals: "always") ifTrue: [^HPACK newTable: max huffman: #always]
     self error: "bad fixture table"
+
+  /// The expected error reason from an `ERROR` line's words: a bare reason,
+  /// `{#index_not_found, index}` or `{#protocol_error, detail}`.
+  reasonFrom: w -> Object =>
+    reason := self reasonSymbol: (w at: 4)
+    w size < 5 ifTrue: [^reason]
+    reason =:= #index_not_found ifTrue: [^{reason, (w at: 5) asInteger}]
+    {reason, (self reasonSymbol: (w at: 5))}
+
+  reasonSymbol: w -> Symbol =>
+    (w equals: "protocol_error") ifTrue: [^#protocol_error]
+    (w equals: "index_not_found") ifTrue: [^#index_not_found]
+    (w equals: "bad_integer_encoding") ifTrue: [^#bad_integer_encoding]
+    (w equals: "bad_binary_encoding") ifTrue: [^#bad_binary_encoding]
+    (w equals: "invalid_huffman_encoding") ifTrue: [^#invalid_huffman_encoding]
+    self error: "bad fixture error reason"
 
   runBlock: lines count: k enc: enc dec: dec count: n =>
     {headers, rest} := self
