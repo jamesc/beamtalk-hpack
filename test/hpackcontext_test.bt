@@ -127,8 +127,11 @@ TestCase subclass: HPACKContextTest
             t := HPACK resize: t newMax: n
           ]
         headers := self randomActionHeaders: (Random nextInteger: 4) - 1
-        {io, t} := HPACK encode: headers table: t
-        self assert: (ctx encode: headers) toBytes equals: (Binary fromIolist: io) toBytes
+        // Plain assignments: a destructuring write to `t` here did not
+        // reach the next iteration, re-signalling a popped resize.
+        encoded := HPACK encode: headers table: t
+        t := encoded at: 2
+        self assert: (ctx encode: headers) toBytes equals: (Binary fromIolist: (encoded at: 1)) toBytes
       ]
     self assert: ctx table size equals: t size
     self assert: ctx table length equals: t length
