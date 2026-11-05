@@ -26,19 +26,23 @@ TestCase subclass: HPACKInteropTest
   /// on a fresh table with the same reason hpax gives.
   testInteropErrors =>
     count := 0
-    self fixtureLines do: [:line |
-      w := line words
-      (w isEmpty) ifFalse: [
-        ((w at: 1) equals: "ERROR") ifTrue: [
-          table := HPACK newTable: (w at: 2) asInteger
-          self assert: (HPACK decode: (self hexBytes: (w at: 3)) table: table) equals: {#error, (self reasonFrom: w)}
-          count := count + 1
-        ]
+    self fixtureLines
+      do: [:line |
+        w := line words
+        (w isEmpty)
+          ifFalse: [
+            ((w at: 1) equals: "ERROR")
+              ifTrue: [
+                table := HPACK newTable: (w at: 2) asInteger
+                self assert: (HPACK decode: (self hexBytes: (w at: 3)) table: table) equals: {#error, (self reasonFrom: w)}
+                count := count + 1
+              ]
+          ]
       ]
-    ]
     self assert: count equals: 11
 
-  fixtureLines -> List => (File readAll: "test/fixtures/hpax_vectors.txt") unwrap lines
+  fixtureLines -> List =>
+    (File readAll: "test/fixtures/hpax_vectors.txt") unwrap lines
 
   runVectors: lines enc: enc dec: dec count: n =>
     lines isEmpty ifTrue: [^n]
