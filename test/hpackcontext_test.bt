@@ -17,7 +17,9 @@ TestCase subclass: HPACKContextTest
     self assert: ctx table huffmanEncoding equals: #always
 
   testNewBadHuffman =>
-    self should: [HPACKContext maxSize: 100 huffman: #sometimes] raise: #user_error
+    self should: [
+      HPACKContext maxSize: 100 huffman: #sometimes
+    ] raise: #user_error
 
   testEncodeAnswersBinary =>
     // RFC 7541 §C.3.1, no Huffman.
@@ -118,11 +120,12 @@ TestCase subclass: HPACKContextTest
     t := HPACK newTable: 300
     50
       timesRepeat: [
-        (Random nextInteger: 10) =:= 1 ifTrue: [
-          n := 50 + (Random nextInteger: 300)
-          ctx resize: n
-          t := HPACK resize: t newMax: n
-        ]
+        (Random nextInteger: 10) =:= 1
+          ifTrue: [
+            n := 50 + (Random nextInteger: 300)
+            ctx resize: n
+            t := HPACK resize: t newMax: n
+          ]
         headers := self randomActionHeaders: (Random nextInteger: 4) - 1
         {io, t} := HPACK encode: headers table: t
         self assert: (ctx encode: headers) toBytes equals: (Binary fromIolist: io) toBytes
