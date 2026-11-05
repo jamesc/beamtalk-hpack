@@ -130,7 +130,7 @@ sequence = fn max, huffman, steps ->
   enc = HPAX.new(max, huffman_encoding: huffman)
   dec = HPAX.new(max, huffman_encoding: huffman)
 
-  {lines, blocks, enc, dec} =
+  {lines, blocks, enc, _dec} =
     Enum.reduce(steps, {["TABLE #{max} #{huffman}"], [], enc, dec}, fn
       {:resize, n}, {lines, blocks, enc, dec} ->
         {lines ++ ["RESIZE #{n}"], blocks, HPAX.resize(enc, n), HPAX.resize(dec, n)}
