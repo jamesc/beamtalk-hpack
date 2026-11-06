@@ -3,7 +3,7 @@
 
 [package]
 name = "hpack"
-version = "0.1.0"
+version = "0.1.1"
 description = "HPACK header compression for HTTP/2, a pure-Beamtalk port of hpax"
 
 [dependencies]
