@@ -309,30 +309,30 @@ TestCase subclass: HPACKTest
   // === Seeded loops (hpax's StreamData properties) ===
   testSingleActionCircularSeeded =>
     self seedRandom: 40800521
-    t := HPACK newTable: 500
+    enc := HPACK newTable: 500
+    dec := HPACK newTable: 500
     100
       timesRepeat: [
         action := #(#store, #store_name, #no_store, #never_store) at: (Random nextInteger: 4)
         headers := self randomHeaders: (Random nextInteger: 4) - 1
-        {io, t} := HPACK
+        {io, enc} := HPACK
           encode: action
           headers: headers
-          table: t
-        result := HPACK decode: (self wire: io) table: t
-        self assert: (result at: 1) equals: #ok
-        self assertHeaders: (result at: 2) equals: headers
+          table: enc
+        {#ok, decoded, dec} := HPACK decode: (self wire: io) table: dec
+        self assertHeaders: decoded equals: headers
       ]
 
   testEncodeDecodeCircularSeeded =>
     self seedRandom: 40800522
-    t := HPACK newTable: 500
+    enc := HPACK newTable: 500
+    dec := HPACK newTable: 500
     100
       timesRepeat: [
         headers := self randomActionHeaders: (Random nextInteger: 4) - 1
-        {io, t} := HPACK encode: headers table: t
-        result := HPACK decode: (self wire: io) table: t
-        self assert: (result at: 1) equals: #ok
-        self assertHeaders: (result at: 2) equals: (self plainHeaders: headers)
+        {io, enc} := HPACK encode: headers table: enc
+        {#ok, decoded, dec} := HPACK decode: (self wire: io) table: dec
+        self assertHeaders: decoded equals: (self plainHeaders: headers)
       ]
 
   // === Helpers ===
@@ -361,9 +361,7 @@ TestCase subclass: HPACKTest
   plainHeaders: headers -> List =>
     headers collect: [:h | {(h at: 2), (h at: 3)}]
 
-  randomBytes: n -> List =>
-    n =:= 0 ifTrue: [^#()]
-    self randomBytes: n - 1 into: #()
+  randomBytes: n -> List => self randomBytes: n into: #()
 
   randomBytes: n into: acc =>
     n =:= 0 ifTrue: [^acc]
