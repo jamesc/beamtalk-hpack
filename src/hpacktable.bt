@@ -34,7 +34,7 @@ sealed typed Value subclass: HPACKTable
   /// t := HPACKTable new: 4096 huffman: #never
   /// t maxTableSize   // => 4096
   /// ```
-  class sealed new: protocolMax :: Integer huffman: h :: Symbol -> HPACKTable =>
+  class new: protocolMax :: Integer huffman: h :: Symbol -> HPACKTable =>
     // The keyword constructor builds the map in one step; `new:` with a
     // map walks the declared fields at run time (~30x slower).
     HPACKTable
@@ -47,7 +47,7 @@ sealed typed Value subclass: HPACKTable
       pendingMinimumResize: nil
 
   /// `h` when it is `#always` or `#never`; anything else raises.
-  class sealed checkHuffman: h :: Symbol -> Symbol =>
+  class checkHuffman: h :: Symbol -> Symbol =>
     h match: [
       #always -> h;
       #never -> h;
@@ -57,11 +57,11 @@ sealed typed Value subclass: HPACKTable
   // === The static table (RFC 7541 Appendix A) ===
 
   /// The static table (RFC 7541 Appendix A), oldest-first: index 1 is first.
-  class sealed staticTable -> List(Tuple) =>
+  class staticTable -> List(Tuple) =>
     #({":authority", nil}, {":method", "GET"}, {":method", "POST"}, {":path", "/"}, {":path", "/index.html"}, {":scheme", "http"}, {":scheme", "https"}, {":status", "200"}, {":status", "204"}, {":status", "206"}, {":status", "304"}, {":status", "400"}, {":status", "404"}, {":status", "500"}, {"accept-charset", nil}, {"accept-encoding", "gzip, deflate"}, {"accept-language", nil}, {"accept-ranges", nil}, {"accept", nil}, {"access-control-allow-origin", nil}, {"age", nil}, {"allow", nil}, {"authorization", nil}, {"cache-control", nil}, {"content-disposition", nil}, {"content-encoding", nil}, {"content-language", nil}, {"content-length", nil}, {"content-location", nil}, {"content-range", nil}, {"content-type", nil}, {"cookie", nil}, {"date", nil}, {"etag", nil}, {"expect", nil}, {"expires", nil}, {"from", nil}, {"host", nil}, {"if-match", nil}, {"if-modified-since", nil}, {"if-none-match", nil}, {"if-range", nil}, {"if-unmodified-since", nil}, {"last-modified", nil}, {"link", nil}, {"location", nil}, {"max-forwards", nil}, {"proxy-authenticate", nil}, {"proxy-authorization", nil}, {"range", nil}, {"referer", nil}, {"refresh", nil}, {"retry-after", nil}, {"server", nil}, {"set-cookie", nil}, {"strict-transport-security", nil}, {"transfer-encoding", nil}, {"user-agent", nil}, {"vary", nil}, {"via", nil}, {"www-authenticate", nil})
 
   /// The number of static entries (61).
-  class sealed staticTableSize -> Integer => 61
+  class staticTableSize -> Integer => 61
 
   /// The static table indexed for lookups, built once per VM and cached
   /// under `#hpack_static_index` (like the Huffman tables, it lives for the
@@ -72,14 +72,14 @@ sealed typed Value subclass: HPACKTable
   /// a `{name, value}` pair maps to its full-match index, a bare name to
   /// its first (lowest) index. Header lookups are then one or two map reads
   /// instead of a scan over 61 entries.
-  class sealed staticIndex -> Tuple =>
+  class staticIndex -> Tuple =>
     ((Erlang persistent_term) get: #hpack_static_index with: nil) match: [
       {entries, index} -> {entries, index};
       _ -> self buildStaticIndex
     ]
 
   /// Canonicalize and index the static table, and cache it.
-  class sealed buildStaticIndex -> Tuple =>
+  class buildStaticIndex -> Tuple =>
     pairs := HPACKTable staticTable collect: [:e :: Tuple |
       {(HPACKTypes canon: (e at: 1)), self canonValue: (e at: 2)}
     ]
@@ -99,10 +99,10 @@ sealed typed Value subclass: HPACKTable
     built
 
   /// The canonicalized static table as a list of pairs, index 1 first.
-  class sealed staticBinaries -> List => (HPACKTable staticIndex at: 1) asList
+  class staticBinaries -> List => (HPACKTable staticIndex at: 1) asList
 
   /// Canonicalize a static value, keeping nil (name-only entries).
-  class sealed canonValue: value :: Binary -> Binary | Nil =>
+  class canonValue: value :: Binary -> Binary | Nil =>
     value isNil ifTrue: [^nil]
     HPACKTypes canon: value
 
@@ -110,7 +110,7 @@ sealed typed Value subclass: HPACKTable
 
   /// The first dynamic index: one past the static table, derived (not a
   /// second constant to keep in sync).
-  class sealed dynamicTableStart -> Integer => HPACKTable staticTableSize + 1
+  class dynamicTableStart -> Integer => HPACKTable staticTableSize + 1
 
   /// Add a header, evicting oldest entries past the maximum (hpax `add/3`).
   /// An entry larger than the maximum empties the table.

@@ -38,8 +38,7 @@ sealed typed Actor subclass: HPACKContext
   /// ctx := HPACKContext maxSize: 4096
   /// ctx table maxTableSize   // => 4096
   /// ```
-  class sealed maxSize: n :: Integer -> HPACKContext =>
-    self maxSize: n huffman: #never
+  class maxSize: n :: Integer -> HPACKContext => self maxSize: n huffman: #never
 
   /// Spawn a context with the given Huffman policy, `#always` or `#never`
   /// (as `HPACK newTable:huffman:`). Anything else raises in the caller.
@@ -47,7 +46,7 @@ sealed typed Actor subclass: HPACKContext
   /// ## Arguments
   /// - `n` (Integer) — the protocol maximum table size in bytes.
   /// - `h` (Symbol) — `#always` to Huffman-code literals, `#never` for plain.
-  class sealed maxSize: n :: Integer huffman: h :: Symbol -> HPACKContext =>
+  class maxSize: n :: Integer huffman: h :: Symbol -> HPACKContext =>
     self spawnWith: #{#table => (HPACK newTable: n huffman: h)}
 
   // === Encoding ===

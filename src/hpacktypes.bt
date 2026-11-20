@@ -19,11 +19,11 @@ sealed typed Object subclass: HPACKTypes
   // === Integer bounds ===
 
   /// The largest HPACK integer (RFC 7541 §5.1: values fit in 0..2^32 - 1).
-  class sealed maxInteger -> Integer => 4294967295
+  class maxInteger -> Integer => 4294967295
 
   /// The largest continuation shift still willing to continue: 2^32 - 1
   /// needs at most 5 continuation octets (7 bits each).
-  class sealed maxShift -> Integer => 28
+  class maxShift -> Integer => 28
 
   /// Canonicalize bytes to `Binary`. A `String` never `equals:` a `Binary`
   /// (BT-4173), and `do:` on a `String` yields graphemes, not bytes, so
@@ -32,7 +32,7 @@ sealed typed Object subclass: HPACKTypes
   /// input answers itself (no flattening round trip); a `String` answers its
   /// UTF-8 bytes straight from the binary pattern (no class lookup, no
   /// dispatch), and anything else (iolists) is flattened.
-  class sealed canon: bytes :: Binary -> Binary =>
+  class canon: bytes :: Binary -> Binary =>
     bytes match: [
       <<b/binary>> -> b;
       _ -> Binary fromIolist: bytes
@@ -55,7 +55,7 @@ sealed typed Object subclass: HPACKTypes
   /// HPACKTypes encodeInteger: 1337 prefix: 5 flags: 0   // => #(31, 154, 10)
   /// HPACKTypes encodeInteger: 42 prefix: 8 flags: 0   // => #(42)
   /// ```
-  class sealed encodeInteger: value :: Integer prefix: p :: Integer flags: flags :: Integer -> List(Integer) =>
+  class encodeInteger: value :: Integer prefix: p :: Integer flags: flags :: Integer -> List(Integer) =>
     max := (1 bitShift: p) - 1
     value < max ifTrue: [
       #(flags bitOr: value)
@@ -63,7 +63,7 @@ sealed typed Object subclass: HPACKTypes
 
   /// The continuation octets of an integer past its prefix (RFC 7541 §5.1):
   /// 7 bits each, low first, the high bit set on all but the last.
-  class sealed continuation: v :: Integer into: acc :: List(Integer) -> List(Integer) =>
+  class continuation: v :: Integer into: acc :: List(Integer) -> List(Integer) =>
     v < 128 ifTrue: [
       acc ++ #(v)
     ] ifFalse: [
@@ -77,7 +77,7 @@ sealed typed Object subclass: HPACKTypes
   /// ## Arguments
   /// - `bin` (Binary) — the bytes starting with the prefixed integer.
   /// - `p` (Integer) — the prefix width in bits (1..8).
-  class sealed decodeInteger: bin :: Binary prefix: p :: Integer -> Tuple =>
+  class decodeInteger: bin :: Binary prefix: p :: Integer -> Tuple =>
     skip := 8 - p
     max := (1 bitShift: p) - 1
     bin match: [
@@ -101,7 +101,7 @@ sealed typed Object subclass: HPACKTypes
   /// - `bin` (Binary) — the bytes starting with the next continuation octet.
   /// - `acc` (Integer) — the value accumulated so far.
   /// - `m` (Integer) — the shift for the next 7 bits.
-  class sealed decodeRest: bin :: Binary value: acc :: Integer shift: m :: Integer -> Tuple =>
+  class decodeRest: bin :: Binary value: acc :: Integer shift: m :: Integer -> Tuple =>
     bin match: [
       <<0:1, v:7, rest/binary>> -> self finishInteger: acc + (v bitShift: m) rest: rest;
       <<_:1, v:7, rest/binary>> -> m <= self maxShift
@@ -120,7 +120,7 @@ sealed typed Object subclass: HPACKTypes
   /// ## Arguments
   /// - `value` (Integer) — the decoded integer to check.
   /// - `rest` (Binary) — the bytes after the integer.
-  class sealed finishInteger: value :: Integer rest: rest :: Binary -> Tuple =>
+  class finishInteger: value :: Integer rest: rest :: Binary -> Tuple =>
     value <= self maxInteger ifTrue: [
       {#ok, value, rest}
     ] ifFalse: [{#error, #bad_integer_encoding}]
@@ -134,17 +134,17 @@ sealed typed Object subclass: HPACKTypes
   /// ## Arguments
   /// - `bytes` (Binary) — the content to encode (`String` is canonicalized).
   /// - `h` (Boolean) — Huffman-code the content when true.
-  class sealed encodeBinary: bytes :: Binary huffman: h :: Boolean -> List =>
+  class encodeBinary: bytes :: Binary huffman: h :: Boolean -> List =>
     self encodeBytes: (self canon: bytes) huffman: h
 
   /// `encodeBinary:huffman:` for bytes already canonicalized to `Binary`.
-  class sealed encodeBytes: bin :: Binary huffman: h :: Boolean -> List =>
+  class encodeBytes: bin :: Binary huffman: h :: Boolean -> List =>
     h ifTrue: [
       self literal: (HPACKHuffman encodeBytes: bin) flags: 128
     ] ifFalse: [self literal: bin flags: 0]
 
   /// The length (7-bit prefix, `flags` its high bit) then the content.
-  class sealed literal: content :: Binary flags: flags :: Integer -> List =>
+  class literal: content :: Binary flags: flags :: Integer -> List =>
     #((self
       encodeInteger: content size
       prefix: 7
@@ -156,7 +156,7 @@ sealed typed Object subclass: HPACKTypes
   ///
   /// ## Arguments
   /// - `bin` (Binary) — the bytes starting with the string literal.
-  class sealed decodeBinary: bin :: Binary -> Tuple =>
+  class decodeBinary: bin :: Binary -> Tuple =>
     bin match: [
       <<h:1, len7:7, rest/binary>> -> len7 < 127
         ifTrue: [
@@ -186,7 +186,7 @@ sealed typed Object subclass: HPACKTypes
   /// - `bin` (Binary) — the bytes starting with the content.
   /// - `len` (Integer) — the content length in bytes.
   /// - `h` (Boolean) — Huffman-decode the content when true.
-  class sealed decodeContent: bin :: Binary length: len :: Integer huffman: h :: Boolean -> Tuple =>
+  class decodeContent: bin :: Binary length: len :: Integer huffman: h :: Boolean -> Tuple =>
     bin match: [
       <<content:len/binary, rest/binary>> when: [len >= 0] -> h
         ifTrue: [

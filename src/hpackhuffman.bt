@@ -21,7 +21,7 @@ sealed typed Object subclass: HPACKHuffman
   /// The raw Huffman table as {byte, bits, count} triples (byte 256 is
   /// EOS), mechanically generated from hpax's `huffman_table`, never
   /// hand-edited.
-  class sealed entries -> List =>
+  class entries -> List =>
     #({0, 8184, 13}, {1, 8388568, 23}, {2, 268435426, 28}, {3, 268435427, 28}, {4, 268435428, 28}, {5, 268435429, 28}, {6, 268435430, 28}, {7, 268435431, 28}, {8, 268435432, 28}, {9, 16777194, 24}, {10, 1073741820, 30}, {11, 268435433, 28}, {12, 268435434, 28}, {13, 1073741821, 30}, {14, 268435435, 28}, {15, 268435436, 28}, {16, 268435437, 28}, {17, 268435438, 28}, {18, 268435439, 28}, {19, 268435440, 28}, {20, 268435441, 28}, {21, 268435442, 28}, {22, 1073741822, 30}, {23, 268435443, 28}, {24, 268435444, 28}, {25, 268435445, 28}, {26, 268435446, 28}, {27, 268435447, 28}, {28, 268435448, 28}, {29, 268435449, 28}, {30, 268435450, 28}, {31, 268435451, 28}, {32, 20, 6}, {33, 1016, 10}, {34, 1017, 10}, {35, 4090, 12}, {36, 8185, 13}, {37, 21, 6}, {38, 248, 8}, {39, 2042, 11}, {40, 1018, 10}, {41, 1019, 10}, {42, 249, 8}, {43, 2043, 11}, {44, 250, 8}, {45, 22, 6}, {46, 23, 6}, {47, 24, 6}, {48, 0, 5}, {49, 1, 5}, {50, 2, 5}, {51, 25, 6}, {52, 26, 6}, {53, 27, 6}, {54, 28, 6}, {55, 29, 6}, {56, 30, 6}, {57, 31, 6}, {58, 92, 7}, {59, 251, 8}, {60, 32764, 15}, {61, 32, 6}, {62, 4091, 12}, {63, 1020, 10}, {64, 8186, 13}, {65, 33, 6}, {66, 93, 7}, {67, 94, 7}, {68, 95, 7}, {69, 96, 7}, {70, 97, 7}, {71, 98, 7}, {72, 99, 7}, {73, 100, 7}, {74, 101, 7}, {75, 102, 7}, {76, 103, 7}, {77, 104, 7}, {78, 105, 7}, {79, 106, 7}, {80, 107, 7}, {81, 108, 7}, {82, 109, 7}, {83, 110, 7}, {84, 111, 7}, {85, 112, 7}, {86, 113, 7}, {87, 114, 7}, {88, 252, 8}, {89, 115, 7}, {90, 253, 8}, {91, 8187, 13}, {92, 524272, 19}, {93, 8188, 13}, {94, 16380, 14}, {95, 34, 6}, {96, 32765, 15}, {97, 3, 5}, {98, 35, 6}, {99, 4, 5}, {100, 36, 6}, {101, 5, 5}, {102, 37, 6}, {103, 38, 6}, {104, 39, 6}, {105, 6, 5}, {106, 116, 7}, {107, 117, 7}, {108, 40, 6}, {109, 41, 6}, {110, 42, 6}, {111, 7, 5}, {112, 43, 6}, {113, 118, 7}, {114, 44, 6}, {115, 8, 5}, {116, 9, 5}, {117, 45, 6}, {118, 119, 7}, {119, 120, 7}, {120, 121, 7}, {121, 122, 7}, {122, 123, 7}, {123, 32766, 15}, {124, 2044, 11}, {125, 16381, 14}, {126, 8189, 13}, {127, 268435452, 28}, {128, 1048550, 20}, {129, 4194258, 22}, {130, 1048551, 20}, {131, 1048552, 20}, {132, 4194259, 22}, {133, 4194260, 22}, {134, 4194261, 22}, {135, 8388569, 23}, {136, 4194262, 22}, {137, 8388570, 23}, {138, 8388571, 23}, {139, 8388572, 23}, {140, 8388573, 23}, {141, 8388574, 23}, {142, 16777195, 24}, {143, 8388575, 23}, {144, 16777196, 24}, {145, 16777197, 24}, {146, 4194263, 22}, {147, 8388576, 23}, {148, 16777198, 24}, {149, 8388577, 23}, {150, 8388578, 23}, {151, 8388579, 23}, {152, 8388580, 23}, {153, 2097116, 21}, {154, 4194264, 22}, {155, 8388581, 23}, {156, 4194265, 22}, {157, 8388582, 23}, {158, 8388583, 23}, {159, 16777199, 24}, {160, 4194266, 22}, {161, 2097117, 21}, {162, 1048553, 20}, {163, 4194267, 22}, {164, 4194268, 22}, {165, 8388584, 23}, {166, 8388585, 23}, {167, 2097118, 21}, {168, 8388586, 23}, {169, 4194269, 22}, {170, 4194270, 22}, {171, 16777200, 24}, {172, 2097119, 21}, {173, 4194271, 22}, {174, 8388587, 23}, {175, 8388588, 23}, {176, 2097120, 21}, {177, 2097121, 21}, {178, 4194272, 22}, {179, 2097122, 21}, {180, 8388589, 23}, {181, 4194273, 22}, {182, 8388590, 23}, {183, 8388591, 23}, {184, 1048554, 20}, {185, 4194274, 22}, {186, 4194275, 22}, {187, 4194276, 22}, {188, 8388592, 23}, {189, 4194277, 22}, {190, 4194278, 22}, {191, 8388593, 23}, {192, 67108832, 26}, {193, 67108833, 26}, {194, 1048555, 20}, {195, 524273, 19}, {196, 4194279, 22}, {197, 8388594, 23}, {198, 4194280, 22}, {199, 33554412, 25}, {200, 67108834, 26}, {201, 67108835, 26}, {202, 67108836, 26}, {203, 134217694, 27}, {204, 134217695, 27}, {205, 67108837, 26}, {206, 16777201, 24}, {207, 33554413, 25}, {208, 524274, 19}, {209, 2097123, 21}, {210, 67108838, 26}, {211, 134217696, 27}, {212, 134217697, 27}, {213, 67108839, 26}, {214, 134217698, 27}, {215, 16777202, 24}, {216, 2097124, 21}, {217, 2097125, 21}, {218, 67108840, 26}, {219, 67108841, 26}, {220, 268435453, 28}, {221, 134217699, 27}, {222, 134217700, 27}, {223, 134217701, 27}, {224, 1048556, 20}, {225, 16777203, 24}, {226, 1048557, 20}, {227, 2097126, 21}, {228, 4194281, 22}, {229, 2097127, 21}, {230, 2097128, 21}, {231, 8388595, 23}, {232, 4194282, 22}, {233, 4194283, 22}, {234, 33554414, 25}, {235, 33554415, 25}, {236, 16777204, 24}, {237, 16777205, 24}, {238, 67108842, 26}, {239, 8388596, 23}, {240, 67108843, 26}, {241, 134217702, 27}, {242, 67108844, 26}, {243, 67108845, 26}, {244, 134217703, 27}, {245, 134217704, 27}, {246, 134217705, 27}, {247, 134217706, 27}, {248, 134217707, 27}, {249, 268435454, 28}, {250, 134217708, 27}, {251, 134217709, 27}, {252, 134217710, 27}, {253, 134217711, 27}, {254, 134217712, 27}, {255, 67108846, 26}, {256, 1073741823, 30})
 
   // === The built tables (one `persistent_term` entry per VM) ===
@@ -35,14 +35,14 @@ sealed typed Object subclass: HPACKHuffman
   /// decode automaton (see `decode:`): a tuple of states, state 0 the root,
   /// each state a `{depth, transitions}` pair with a 16-tuple of `{emit,
   /// next}` per nibble (`emit` a byte or nil, `next` a state id or nil).
-  class sealed tables -> Tuple =>
+  class tables -> Tuple =>
     ((Erlang persistent_term) get: #hpack_huffman_tables with: nil) match: [
       {enc, dfa} -> {enc, dfa};
       _ -> self buildAndStoreTables
     ]
 
   /// Build the tables, store them, and answer them.
-  class sealed buildAndStoreTables -> Tuple =>
+  class buildAndStoreTables -> Tuple =>
     built := self buildTables
     (Erlang persistent_term) put: #hpack_huffman_tables with: built
     built
@@ -52,7 +52,7 @@ sealed typed Object subclass: HPACKHuffman
   /// by length and ones, which is equivalent for this table — see `decode:`).
   /// A dead nibble transition also answers `invalidEncoding`, so mid-input
   /// behavior coincides with hpax too.
-  class sealed buildTables -> Tuple =>
+  class buildTables -> Tuple =>
     (self minCodeLength: self entries min: 30) < 5 ifTrue: [
       self error: "Huffman table needs every code >= 5 bits for the nibble DFA"
     ]
@@ -71,7 +71,7 @@ sealed typed Object subclass: HPACKHuffman
   /// holds at most one byte per nibble, which needs every code longer than
   /// a nibble — enforced in `buildTables`, so a table typo fails at build,
   /// not as silent wrong decodes).
-  class sealed minCodeLength: entries :: List min: m :: Integer -> Integer =>
+  class minCodeLength: entries :: List min: m :: Integer -> Integer =>
     entries isEmpty ifTrue: [^m]
     {byte, _, count} := entries first
     self minCodeLength: entries rest min: (byte < 256 ifTrue: [
@@ -79,7 +79,7 @@ sealed typed Object subclass: HPACKHuffman
     ] ifFalse: [m])
 
   /// Build the decode DFA from the raw entries.
-  class sealed buildDfa -> Tuple =>
+  class buildDfa -> Tuple =>
     {nodes, count} := self buildTrie
     Tuple
       withAll: (self
@@ -91,14 +91,14 @@ sealed typed Object subclass: HPACKHuffman
   /// Build the bit-trie of the codes (EOS excluded): `{nodes, nodeCount}`
   /// where `nodes` sends an id to `{zero, one, value, depth}` (child ids or
   /// nil, leaf byte or nil, bits from the last emission).
-  class sealed buildTrie -> Tuple =>
+  class buildTrie -> Tuple =>
     self
       trieEntries: self entries
       nodes: (Dictionary new at: 0 put: {nil, nil, nil, 0})
       next: 1
 
   /// Insert every entry into the trie.
-  class sealed trieEntries: entries :: List nodes: nodes :: Dictionary next: next :: Integer -> Tuple =>
+  class trieEntries: entries :: List nodes: nodes :: Dictionary next: next :: Integer -> Tuple =>
     entries isEmpty ifTrue: [^{nodes, next}]
     {byte, bits, count} := entries first
     rest := entries rest
@@ -123,7 +123,7 @@ sealed typed Object subclass: HPACKHuffman
       next: next2
 
   /// Insert one code: `{nodes, nextId}`.
-  class sealed trieInsert: nodes :: Dictionary id: id :: Integer bits: bits :: Integer count: count :: Integer value: value :: Integer depth: depth :: Integer next: next :: Integer -> Tuple =>
+  class trieInsert: nodes :: Dictionary id: id :: Integer bits: bits :: Integer count: count :: Integer value: value :: Integer depth: depth :: Integer next: next :: Integer -> Tuple =>
     count =:= 0
       ifTrue: [
         node := nodes at: id
@@ -157,7 +157,7 @@ sealed typed Object subclass: HPACKHuffman
       next: next + 1
 
   /// Freeze trie nodes `id..count - 1` into DFA states, newest-first.
-  class sealed freezeStates: nodes :: Dictionary id: id :: Integer count: count :: Integer into: acc :: List -> List =>
+  class freezeStates: nodes :: Dictionary id: id :: Integer count: count :: Integer into: acc :: List -> List =>
     id >= count ifTrue: [^acc reversed]
     node := nodes at: id
     self
@@ -167,7 +167,7 @@ sealed typed Object subclass: HPACKHuffman
       into: (acc addFirst: {(node at: 4), self stateTrans: nodes node: id})
 
   /// The 16 nibble transitions of one trie node: `{emit, next}` each.
-  class sealed stateTrans: nodes :: Dictionary node: id :: Integer -> Tuple =>
+  class stateTrans: nodes :: Dictionary node: id :: Integer -> Tuple =>
     {(self
       nibEntry: nodes
       node: id
@@ -220,7 +220,7 @@ sealed typed Object subclass: HPACKHuffman
 
   /// Walk 4 nibble bits through the trie from `id`: `{emit, next}` (`next`
   /// nil when the bits match no code path).
-  class sealed nibEntry: nodes :: Dictionary node: id :: Integer nibble: q :: Integer -> Tuple =>
+  class nibEntry: nodes :: Dictionary node: id :: Integer nibble: q :: Integer -> Tuple =>
     self
       dfaWalk: nodes
       node: id
@@ -229,7 +229,7 @@ sealed typed Object subclass: HPACKHuffman
       emit: nil
 
   /// One DFA transition step: `{emit, next}`.
-  class sealed dfaWalk: nodes :: Dictionary node: n :: Integer nibble: q :: Integer bitsLeft: k :: Integer emit: emit :: Object -> Tuple =>
+  class dfaWalk: nodes :: Dictionary node: n :: Integer nibble: q :: Integer bitsLeft: k :: Integer emit: emit :: Object -> Tuple =>
     k =:= 0 ifTrue: [^{emit, n}]
     node := nodes at: n
     bit := (q bitShift: (1 - k)) bitAnd: 1
@@ -274,14 +274,14 @@ sealed typed Object subclass: HPACKHuffman
   /// may end there: the root, or a state at most 7 bits deep on the
   /// all-ones path (EOS padding — the trailing bits since the last emission
   /// are exactly the path to the current state).
-  class sealed fastTables -> Tuple =>
+  class fastTables -> Tuple =>
     ((Erlang persistent_term) get: #hpack_huffman_fast with: nil) match: [
       {codes, nexts, outs, accept} -> {codes, nexts, outs, accept};
       _ -> self buildAndStoreFast
     ]
 
   /// Build the fast tables, store them, and answer them.
-  class sealed buildAndStoreFast -> Tuple =>
+  class buildAndStoreFast -> Tuple =>
     {_, states} := self tables
     {nodes, _} := self buildTrie
     sink := states size
@@ -310,7 +310,7 @@ sealed typed Object subclass: HPACKHuffman
     built
 
   /// The 256 codes as bitstrings, byte order (EOS excluded).
-  class sealed buildCodes -> Tuple =>
+  class buildCodes -> Tuple =>
     codes := #()
     self entries
       do: [:entry :: Tuple |
@@ -321,16 +321,16 @@ sealed typed Object subclass: HPACKHuffman
 
   /// One `{emit, next}` nibble transition as `{nextState, emittedBytes}`,
   /// dead transitions going to `sink`.
-  class sealed step: tr :: Tuple sink: sink :: Integer -> Tuple =>
+  class step: tr :: Tuple sink: sink :: Integer -> Tuple =>
     {emit, next} := tr
     next isNil ifTrue: [{sink, <<>>}] ifFalse: [{next, self emitted: emit}]
 
   /// A nibble's emitted byte as a binary (empty when none).
-  class sealed emitted: emit :: Integer | Nil -> Binary =>
+  class emitted: emit :: Integer | Nil -> Binary =>
     emit isNil ifTrue: [<<>>] ifFalse: [<<emit:8>>]
 
   /// The trie ids along the all-ones path below `id`, `left` bits deep.
-  class sealed onesPath: nodes :: Dictionary id: id :: Integer left: left :: Integer into: acc :: List -> List =>
+  class onesPath: nodes :: Dictionary id: id :: Integer left: left :: Integer into: acc :: List -> List =>
     left =:= 0 ifTrue: [^acc]
     child := (nodes at: id) at: 2
     child isNil ifTrue: [^acc]
@@ -353,11 +353,11 @@ sealed typed Object subclass: HPACKHuffman
   /// (HPACKHuffman encode: (HPACKTypes canon: "www.example.com")) size
   /// // => 12 (RFC 7541 §C.4.1)
   /// ```
-  class sealed encode: bytes :: Binary -> Binary =>
+  class encode: bytes :: Binary -> Binary =>
     self encodeBytes: (HPACKTypes canon: bytes)
 
   /// `encode:` for bytes already canonicalized to `Binary`.
-  class sealed encodeBytes: bin :: Binary -> Binary =>
+  class encodeBytes: bin :: Binary -> Binary =>
     bits := self
       encodeBits: bin
       codes: (self fastTables at: 1)
@@ -370,7 +370,7 @@ sealed typed Object subclass: HPACKHuffman
 
   /// Append each byte's code to `acc`, four bytes per step where it can
   /// (one bitstring append and one call for four codes).
-  class sealed encodeBits: bin :: Binary codes: codes :: Tuple acc: acc :: Bitstring | Binary -> Bitstring | Binary =>
+  class encodeBits: bin :: Binary codes: codes :: Tuple acc: acc :: Bitstring | Binary -> Bitstring | Binary =>
     bin match: [
       <<b1:8, b2:8, b3:8, b4:8, rest/binary>> -> self
         encodeBits: rest
@@ -400,11 +400,11 @@ sealed typed Object subclass: HPACKHuffman
   /// HPACKHuffman decode: (HPACKHuffman encode: (HPACKTypes canon: "hi"))
   /// // => {#ok, "hi"} (the plain bytes print as a quoted string)
   /// ```
-  class sealed decode: bytes :: Binary -> Tuple =>
+  class decode: bytes :: Binary -> Tuple =>
     self decodeBytes: (HPACKTypes canon: bytes)
 
   /// `decode:` for bytes already canonicalized to `Binary`.
-  class sealed decodeBytes: bin :: Binary -> Tuple =>
+  class decodeBytes: bin :: Binary -> Tuple =>
     {_, nexts, outs, accept} := self fastTables
     self
       decodeBits: bin
@@ -419,7 +419,7 @@ sealed typed Object subclass: HPACKHuffman
   /// accept or answer the invalid-encoding error. The state between the
   /// two nibbles, `nexts at: (s * 16) + hi + 1`, is spelled inline because
   /// an arm is one expression (a helper call per nibble measured slower).
-  class sealed decodeBits: bin :: Binary nexts: nexts :: Tuple outs: outs :: Tuple accept: accept :: Tuple state: s :: Integer acc: acc :: Binary -> Tuple =>
+  class decodeBits: bin :: Binary nexts: nexts :: Tuple outs: outs :: Tuple accept: accept :: Tuple state: s :: Integer acc: acc :: Binary -> Tuple =>
     bin match: [
       <<hi:4, lo:4, rest/binary>> -> self
         decodeBits: rest
@@ -435,5 +435,5 @@ sealed typed Object subclass: HPACKHuffman
 
   /// The invalid-encoding error (hpax's `{:protocol_error,
   /// :invalid_huffman_encoding}`).
-  class sealed invalidEncoding -> Tuple =>
+  class invalidEncoding -> Tuple =>
     {#error, {#protocol_error, #invalid_huffman_encoding}}
