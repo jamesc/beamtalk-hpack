@@ -33,6 +33,11 @@ TestCase subclass: HPACKHuffmanTest
     // invalid, not crash.
     self assert: (HPACKHuffman decode: (Binary fromBytes: #(255, 255, 255, 255))) equals: {#error, {#protocol_error, #invalid_huffman_encoding}}
 
+  testFastTablesReadTwiceAnswerSame =>
+    first := HPACKHuffman fastTables
+    self assert: HPACKHuffman fastTables equals: first
+    self assert: first size equals: 4
+
   testTablesBuiltOnce =>
     // The persistent_term cache answers the same tables on repeat calls.
     first := HPACKHuffman tables
