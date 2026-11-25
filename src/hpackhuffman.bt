@@ -36,7 +36,10 @@ sealed typed Object subclass: HPACKHuffman
   /// each state a `{depth, transitions}` pair with a 16-tuple of `{emit,
   /// next}` per nibble (`emit` a byte or nil, `next` a state id or nil).
   class tables -> Tuple =>
-    PersistentTerm at: #hpack_huffman_tables_v1 ifAbsentPut: [self buildTables]
+    {enc, dfa} := PersistentTerm at: #hpack_huffman_tables_v1 ifAbsentPut: [
+      self buildTables
+    ]
+    {enc, dfa}
 
   /// Build `{encodeMap, dfa}` from the raw entries (EOS has no code to
   /// emit, so it joins neither table: trailing bits are checked against it
@@ -266,7 +269,10 @@ sealed typed Object subclass: HPACKHuffman
   /// all-ones path (EOS padding — the trailing bits since the last emission
   /// are exactly the path to the current state).
   class fastTables -> Tuple =>
-    PersistentTerm at: #hpack_huffman_fast_v1 ifAbsentPut: [self buildFast]
+    {codes, nexts, outs, accept} := PersistentTerm at: #hpack_huffman_fast_v1 ifAbsentPut: [
+      self buildFast
+    ]
+    {codes, nexts, outs, accept}
 
   /// Build the fast tables from `tables` and the code trie (pure and
   /// deterministic; holds no pid, actor or class).

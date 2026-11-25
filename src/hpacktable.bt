@@ -65,7 +65,8 @@ sealed typed Value subclass: HPACKTable
 
   /// The static table indexed for lookups, built once per VM and cached
   /// under `#hpack_static_index_v1` (like the Huffman tables, it lives for the
-  /// VM lifetime: after touching `staticTable`, restart the VM). Answers
+  /// VM lifetime: after touching `staticTable`, bump the `_v1` key; a
+  /// `reload_class` alone re-reads the stale index). Answers
   /// `{entries, index}`: `entries` is the table as a 61-tuple of pairs with
   /// names and values canonicalized to `Binary` (so index lookups are one
   /// `element`), and `index` is one `Dictionary` holding both key shapes —
@@ -73,9 +74,10 @@ sealed typed Value subclass: HPACKTable
   /// its first (lowest) index. Header lookups are then one or two map reads
   /// instead of a scan over 61 entries.
   class staticIndex -> Tuple =>
-    PersistentTerm at: #hpack_static_index_v1 ifAbsentPut: [
+    {entries, index} := PersistentTerm at: #hpack_static_index_v1 ifAbsentPut: [
       self buildStaticIndex
     ]
+    {entries, index}
 
   /// Canonicalize and index the static table (pure and deterministic).
   class buildStaticIndex -> Tuple =>
