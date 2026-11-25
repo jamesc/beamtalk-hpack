@@ -64,8 +64,9 @@ sealed typed Value subclass: HPACKTable
   class staticTableSize -> Integer => 61
 
   /// The static table indexed for lookups, built once per VM and cached
-  /// under `#hpack_static_index` (like the Huffman tables, it lives for the
-  /// VM lifetime: after touching `staticTable`, restart the VM). Answers
+  /// under `#hpack_static_index_v1` (like the Huffman tables, it lives for the
+  /// VM lifetime: after touching `staticTable`, bump the `_v1` key; a
+  /// `reload_class` alone re-reads the stale index). Answers
   /// `{entries, index}`: `entries` is the table as a 61-tuple of pairs with
   /// names and values canonicalized to `Binary` (so index lookups are one
   /// `element`), and `index` is one `Dictionary` holding both key shapes —
@@ -73,12 +74,12 @@ sealed typed Value subclass: HPACKTable
   /// its first (lowest) index. Header lookups are then one or two map reads
   /// instead of a scan over 61 entries.
   class staticIndex -> Tuple =>
-    ((Erlang persistent_term) get: #hpack_static_index with: nil) match: [
-      {entries, index} -> {entries, index};
-      _ -> self buildStaticIndex
+    {entries, index} := PersistentTerm at: #hpack_static_index_v1 ifAbsentPut: [
+      self buildStaticIndex
     ]
+    {entries, index}
 
-  /// Canonicalize and index the static table, and cache it.
+  /// Canonicalize and index the static table (pure and deterministic).
   class buildStaticIndex -> Tuple =>
     pairs := HPACKTable staticTable collect: [:e :: Tuple |
       {(HPACKTypes canon: (e at: 1)), self canonValue: (e at: 2)}
@@ -94,9 +95,7 @@ sealed typed Value subclass: HPACKTable
           (index includesKey: pair) ifFalse: [index := index at: pair put: i]
         ]
       ]
-    built := {(Tuple withAll: pairs), index}
-    (Erlang persistent_term) put: #hpack_static_index with: built
-    built
+    {(Tuple withAll: pairs), index}
 
   /// The canonicalized static table as a list of pairs, index 1 first.
   class staticBinaries -> List => (HPACKTable staticIndex at: 1) asList
