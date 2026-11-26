@@ -81,9 +81,11 @@ sealed typed Value subclass: HPACKTable
 
   /// Canonicalize and index the static table (pure and deterministic).
   class buildStaticIndex -> Tuple =>
-    pairs := HPACKTable staticTable collect: [:e :: Tuple |
-      {(HPACKTypes canon: (e at: 1)), self canonValue: (e at: 2)}
-    ]
+    pairs := HPACKTable staticTable
+      collect: [:e :: Tuple |
+        {name, value} := e
+        {(HPACKTypes canon: name), self canonValue: value}
+      ]
     index := Dictionary new
     i := 0
     pairs

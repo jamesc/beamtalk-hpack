@@ -62,6 +62,33 @@ TestCase subclass: HPACKTypesTest
     self assert: (HPACKTypes decodeInteger: (Binary fromBytes: #(255)) prefix: 5) equals: {#error, #bad_integer_encoding}
     self assert: (HPACKTypes decodeInteger: (Binary fromBytes: #(255, 128)) prefix: 5) equals: {#error, #bad_integer_encoding}
 
+  // === Malformed string literals (RFC 7541 §5.2) ===
+  testDecodeBinaryBadData =>
+    // Empty input has no length octet.
+    self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #())) equals: {#error, #bad_binary_encoding}
+    // Length 3 but only 2 content bytes follow.
+    self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #(3, 97, 98))) equals: {#error, #bad_binary_encoding}
+    // Length 1 with no content at all.
+    self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #(1))) equals: {#error, #bad_binary_encoding}
+    // Huffman flag with a truncated length (127 prefix, no continuation).
+    self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #(255))) equals: {#error, #bad_integer_encoding}
+    // A length far past the input (0x7f then 1337 - 127 = 1210).
+    self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #(127, 187, 9, 97))) equals: {#error, #bad_binary_encoding}
+    // Huffman flag over bytes that are not EOS-padded.
+    self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #(129, 0))) equals: {#error, {#protocol_error, #invalid_huffman_encoding}}
+
+  testDecodeBinaryEveryPrefixOfValidLiteral =>
+    // The C.4.1 Huffman literal `www.example.com`: every strict prefix is
+    // an error, never a crash and never a short success.
+    wire := #(140, 241, 227, 194, 229, 242, 58, 107, 160, 171, 144, 244, 255)
+    self assert: (HPACKTypes decodeBinary: (Binary fromBytes: wire)) equals: {#ok, (HPACKTypes canon: "www.example.com"), (Binary fromBytes: #())}
+    1
+      to: wire size - 1
+      do: [:n :: Integer |
+        r := HPACKTypes decodeBinary: (Binary fromBytes: (wire take: n))
+        self assert: (r at: 1) equals: #error
+      ]
+
   // === 2^32 - 1 bound (RFC 7541 §5.1; hpax CVE-2026-58226) ===
   testDecodeIntegerMax =>
     max := 4294967295

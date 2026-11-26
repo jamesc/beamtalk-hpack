@@ -102,6 +102,41 @@ TestCase subclass: HPACKTest
   testDecodeTruncated =>
     self assert: (HPACK decode: (Binary fromBytes: #(65)) table: (HPACK newTable: 1000)) equals: {#error, #bad_binary_encoding}
 
+  testDecodeTruncatedEveryPrefix =>
+    // RFC 7541 §C.3.1 and §C.4.1 first requests: no strict prefix of a
+    // well-formed block crashes the decoder, and none decodes as the
+    // full header list.
+    wires := #(#(130, 134, 132, 65, 15, 119, 119, 119, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109), #(130, 134, 132, 65, 140, 241, 227, 194, 229, 242, 58, 107, 160, 171, 144, 244, 255))
+    wires
+      do: [:wire :: List |
+        {#ok, full, _} := HPACK decode: (Binary fromBytes: wire) table: (HPACK newTable: 4096)
+        self assert: full size equals: 4
+        1
+          to: wire size - 1
+          do: [:n :: Integer |
+            r := HPACK decode: (Binary fromBytes: (wire take: n)) table: (HPACK newTable: 4096)
+            (r at: 1) =:= #ok ifTrue: [self deny: (r at: 2) size =:= 4]
+          ]
+      ]
+
+  testDecodeTruncatedLiteralShapes =>
+    t := HPACK newTable: 4096
+    // Incremental, new name: missing name, missing value, short value.
+    self assert: (HPACK decode: (Binary fromBytes: #(64)) table: t) equals: {#error, #bad_binary_encoding}
+    self assert: (HPACK decode: (Binary fromBytes: #(64, 1, 97)) table: t) equals: {#error, #bad_binary_encoding}
+    self assert: (HPACK decode: (Binary fromBytes: #(64, 1, 97, 2, 98)) table: t) equals: {#error, #bad_binary_encoding}
+    // Without indexing and never-indexed, new name.
+    self assert: (HPACK decode: (Binary fromBytes: #(0)) table: t) equals: {#error, #bad_binary_encoding}
+    self assert: (HPACK decode: (Binary fromBytes: #(16, 1, 97)) table: t) equals: {#error, #bad_binary_encoding}
+    // Indexed name (index 1), value missing.
+    self assert: (HPACK decode: (Binary fromBytes: #(65)) table: t) equals: {#error, #bad_binary_encoding}
+    self assert: (HPACK decode: (Binary fromBytes: #(1)) table: t) equals: {#error, #bad_binary_encoding}
+    // Index prefix continuation truncated.
+    self assert: (HPACK decode: (Binary fromBytes: #(255)) table: t) equals: {#error, #bad_integer_encoding}
+    self assert: (HPACK decode: (Binary fromBytes: #(127)) table: t) equals: {#error, #bad_integer_encoding}
+    // A size update with a truncated integer.
+    self assert: (HPACK decode: (Binary fromBytes: #(63)) table: t) equals: {#error, #bad_integer_encoding}
+
   // === RFC 7541 Appendix C.2: representation examples (decode) ===
   testRfcC21 =>
     {#ok, headers, t} := HPACK decode: (Binary fromBytes: #(64, 10, 99, 117, 115, 116, 111, 109, 45, 107, 101, 121, 13, 99, 117, 115, 116, 111, 109, 45, 104, 101, 97, 100, 101, 114)) table: (HPACK newTable: 4096)
