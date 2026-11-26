@@ -118,14 +118,12 @@ sealed typed Object subclass: HPACKHuffman
 
   /// Insert one code: `{nodes, nextId}`.
   class trieInsert: nodes :: Dictionary id: id :: Integer bits: bits :: Integer count: count :: Integer value: value :: Integer depth: depth :: Integer next: next :: Integer -> Tuple =>
-    count =:= 0
-      ifTrue: [
-        node := nodes at: id
-        ^{nodes at: id put: {(node at: 1), (node at: 2), value, (node at: 4)}, next}
-      ]
+    {zero, one, leaf, nodeDepth} := nodes at: id
+    count =:= 0 ifTrue: [
+      ^{nodes at: id put: {zero, one, value, nodeDepth}, next}
+    ]
     top := (bits bitShift: (1 - count)) bitAnd: 1
-    node := nodes at: id
-    child := top =:= 0 ifTrue: [node at: 1] ifFalse: [node at: 2]
+    child := top =:= 0 ifTrue: [zero] ifFalse: [one]
     child isNil
       ifFalse: [
         ^self
@@ -138,8 +136,8 @@ sealed typed Object subclass: HPACKHuffman
           next: next
       ]
     grown := top =:= 0 ifTrue: [
-      {next, (node at: 2), (node at: 3), (node at: 4)}
-    ] ifFalse: [{(node at: 1), next, (node at: 3), (node at: 4)}]
+      {next, one, leaf, nodeDepth}
+    ] ifFalse: [{zero, next, leaf, nodeDepth}]
     nodes2 := (nodes at: id put: grown) at: next put: {nil, nil, nil, depth + 1}
     self
       trieInsert: nodes2
@@ -153,12 +151,12 @@ sealed typed Object subclass: HPACKHuffman
   /// Freeze trie nodes `id..count - 1` into DFA states, newest-first.
   class freezeStates: nodes :: Dictionary id: id :: Integer count: count :: Integer into: acc :: List -> List =>
     id >= count ifTrue: [^acc reversed]
-    node := nodes at: id
+    {_, _, _, depth} := nodes at: id
     self
       freezeStates: nodes
       id: id + 1
       count: count
-      into: (acc addFirst: {(node at: 4), self stateTrans: nodes node: id})
+      into: (acc addFirst: {depth, self stateTrans: nodes node: id})
 
   /// The 16 nibble transitions of one trie node: `{emit, next}` each.
   class stateTrans: nodes :: Dictionary node: id :: Integer -> Tuple =>
@@ -225,11 +223,11 @@ sealed typed Object subclass: HPACKHuffman
   /// One DFA transition step: `{emit, next}`.
   class dfaWalk: nodes :: Dictionary node: n :: Integer nibble: q :: Integer bitsLeft: k :: Integer emit: emit :: Object -> Tuple =>
     k =:= 0 ifTrue: [^{emit, n}]
-    node := nodes at: n
+    {zero, one, _, _} := nodes at: n
     bit := (q bitShift: (1 - k)) bitAnd: 1
-    child := bit =:= 0 ifTrue: [node at: 1] ifFalse: [node at: 2]
+    child := bit =:= 0 ifTrue: [zero] ifFalse: [one]
     child isNil ifTrue: [^{nil, nil}]
-    value := (nodes at: child) at: 3
+    {_, _, value, _} := nodes at: child
     value isNil
       ifTrue: [
         self
@@ -325,7 +323,7 @@ sealed typed Object subclass: HPACKHuffman
   /// The trie ids along the all-ones path below `id`, `left` bits deep.
   class onesPath: nodes :: Dictionary id: id :: Integer left: left :: Integer into: acc :: List -> List =>
     left =:= 0 ifTrue: [^acc]
-    child := (nodes at: id) at: 2
+    {_, child, _, _} := nodes at: id
     child isNil ifTrue: [^acc]
     self
       onesPath: nodes
