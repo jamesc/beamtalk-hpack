@@ -72,7 +72,7 @@ TestCase subclass: HPACKTypesTest
     self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #(1))) equals: {#error, #bad_binary_encoding}
     // Huffman flag with a truncated length (127 prefix, no continuation).
     self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #(255))) equals: {#error, #bad_integer_encoding}
-    // A length far past the input (0x7f then 1337 - 127 = 1210).
+    // A length (127 + 59 + 9 * 128 = 1338) far past the input.
     self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #(127, 187, 9, 97))) equals: {#error, #bad_binary_encoding}
     // Huffman flag over bytes that are not EOS-padded.
     self assert: (HPACKTypes decodeBinary: (Binary fromBytes: #(129, 0))) equals: {#error, {#protocol_error, #invalid_huffman_encoding}}

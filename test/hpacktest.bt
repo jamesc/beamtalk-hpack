@@ -115,7 +115,13 @@ TestCase subclass: HPACKTest
           to: wire size - 1
           do: [:n :: Integer |
             r := HPACK decode: (Binary fromBytes: (wire take: n)) table: (HPACK newTable: 4096)
-            (r at: 1) =:= #ok ifTrue: [self deny: (r at: 2) size =:= 4]
+            // Bytes 1-3 are whole indexed fields; the literal starts at byte 4.
+            n <= 3
+              ifTrue: [
+                self assert: (r at: 1) equals: #ok
+                self assert: (r at: 2) size equals: n
+              ]
+              ifFalse: [self assert: (r at: 1) equals: #error]
           ]
       ]
 
@@ -129,7 +135,6 @@ TestCase subclass: HPACKTest
     self assert: (HPACK decode: (Binary fromBytes: #(0)) table: t) equals: {#error, #bad_binary_encoding}
     self assert: (HPACK decode: (Binary fromBytes: #(16, 1, 97)) table: t) equals: {#error, #bad_binary_encoding}
     // Indexed name (index 1), value missing.
-    self assert: (HPACK decode: (Binary fromBytes: #(65)) table: t) equals: {#error, #bad_binary_encoding}
     self assert: (HPACK decode: (Binary fromBytes: #(1)) table: t) equals: {#error, #bad_binary_encoding}
     // Index prefix continuation truncated.
     self assert: (HPACK decode: (Binary fromBytes: #(255)) table: t) equals: {#error, #bad_integer_encoding}

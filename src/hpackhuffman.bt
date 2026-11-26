@@ -323,8 +323,7 @@ sealed typed Object subclass: HPACKHuffman
   /// The trie ids along the all-ones path below `id`, `left` bits deep.
   class onesPath: nodes :: Dictionary id: id :: Integer left: left :: Integer into: acc :: List -> List =>
     left =:= 0 ifTrue: [^acc]
-    {_, one, _, _} := nodes at: id
-    child := one
+    {_, child, _, _} := nodes at: id
     child isNil ifTrue: [^acc]
     self
       onesPath: nodes
